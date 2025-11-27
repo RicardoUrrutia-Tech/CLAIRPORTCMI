@@ -51,7 +51,7 @@ def to_date(x):
 
 
 # =======================================================
-# PROCESOS INDIVIDUALES
+# PROCESO: VENTAS
 # =======================================================
 
 def process_ventas(df, date_from, date_to):
@@ -85,6 +85,10 @@ def process_ventas(df, date_from, date_to):
         ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
     ].sum()
 
+
+# =======================================================
+# PROCESO: PERFORMANCE
+# =======================================================
 
 def process_performance(df, date_from, date_to):
     df = normalize(df.copy())
@@ -137,6 +141,10 @@ def process_performance(df, date_from, date_to):
     })
 
 
+# =======================================================
+# PROCESO: AUDITORÍAS
+# =======================================================
+
 def process_auditorias(df, date_from, date_to):
     df = normalize(df.copy())
 
@@ -154,6 +162,10 @@ def process_auditorias(df, date_from, date_to):
         "Nota_Auditorias": "mean"
     })
 
+
+# =======================================================
+# PROCESO: OFF TIME
+# =======================================================
 
 def process_off_time(df, date_from, date_to):
     df = normalize(df.copy())
@@ -175,6 +187,28 @@ def process_off_time(df, date_from, date_to):
 
 
 # =======================================================
+# PROCESO: DURACIÓN >90 MINUTOS
+# =======================================================
+
+def process_duracion(df, date_from, date_to):
+    df = normalize(df.copy())
+
+    df["fecha"] = df["Start At Local Dt"].apply(to_date)
+    df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
+
+    df["Duration (Minutes)"] = pd.to_numeric(df["Duration (Minutes)"], errors="coerce")
+
+    df["Q_Viajes_90mas"] = df["Duration (Minutes)"].apply(
+        lambda x: 1 if pd.notna(x) and x > 90 else 0
+    )
+
+    if df.empty:
+        return pd.DataFrame({"fecha": [], "Q_Viajes_90mas": []})
+
+    return df.groupby("fecha", as_index=False)[["Q_Viajes_90mas"]].sum()
+
+
+# =======================================================
 # CONSOLIDADO
 # =======================================================
 
@@ -192,8 +226,8 @@ def build_daily_global(dfs):
     Q_cols = [
         "Q_Encuestas", "Q_Tickets", "Q_Tickets_Resueltos",
         "Q_Reopen", "Q_Auditorias",
-        "Q_Reservas_Off_Time", "Ventas_Totales",
-        "Ventas_Compartidas", "Ventas_Exclusivas"
+        "Q_Reservas_Off_Time", "Q_Viajes_90mas",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
     ]
 
     for col in Q_cols:
@@ -207,14 +241,12 @@ def build_daily_global(dfs):
 # FUNCIÓN PRINCIPAL
 # =======================================================
 
-def procesar_global(df_ventas, df_performance, df_auditorias, df_offtime, date_from, date_to):
+def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
 
     ventas = process_ventas(df_ventas, date_from, date_to)
-    performance = process_performance(df_performance, date_from, date_to)
-    auditorias = process_auditorias(df_auditorias, date_from, date_to)
-    offtime = process_off_time(df_offtime, date_from, date_to)
+    performance = process_performance(df_perf, date_from, date_to)
+    auditorias = process_auditorias(df_aud, date_from, date_to)
+    offtime = process_off_time(df_off, date_from, date_to)
+    duracion = process_duracion(df_dur, date_from, date_to)
 
-    diario = build_daily_global([ventas, performance, auditorias, offtime])
-
-    return diario
-
+    return build_daily_global([ventas, performance, auditorias, offtime, duracion])
