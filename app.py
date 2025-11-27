@@ -1,106 +1,87 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
-import os, sys
 
-# ==========================================================
-# FIX IMPORT PATH
-# ==========================================================
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path = [p for p in sys.path if p and p != "app.py"]
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
+st.set_page_config(page_title="DEBUG – CMI Aeropuerto", layout="wide")
+st.title("🛠 DEBUG DE ARCHIVOS – CMI Aeropuerto")
 
-from processor import procesar_global
+st.write("Carga todos los archivos para inspeccionar sus columnas y contenido real.")
 
-# ==========================================================
-# CONFIG STREAMLIT
-# ==========================================================
-st.set_page_config(page_title="Reporte Diario Consolidado", layout="wide")
-st.title("🟦 Reporte Diario Consolidado – Aeropuerto Cabify")
+# ----------------------------------------------------
+# File Uploads
+# ----------------------------------------------------
+ventas_file = st.file_uploader("Ventas (.xlsx)", type=["xlsx"])
+perf_file = st.file_uploader("Performance (.csv)", type=["csv"])
+aud_file = st.file_uploader("Auditorías (.csv)", type=["csv"])
+off_file = st.file_uploader("Offtime (.csv)", type=["csv"])
+dur_file = st.file_uploader("Duración >90 (.csv)", type=["csv"])
 
-st.markdown("""
-Esta aplicación consolida los reportes de **Ventas**, **Performance**, **Auditorías**
-y **Reservas OFF TIME**, generando un informe diario del **periodo seleccionado**.
-""")
-
-# ==========================================================
-# RANGO DE FECHAS
-# ==========================================================
-st.header("📅 Seleccione el período del análisis")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    date_from = st.date_input("Desde", value=pd.to_datetime("2025-11-01"))
-
-with col2:
-    date_to = st.date_input("Hasta", value=pd.to_datetime("2025-11-30"))
-
-if date_to < date_from:
-    st.error("❌ La fecha final debe ser mayor o igual a la fecha inicial.")
+if not all([ventas_file, perf_file, aud_file, off_file, dur_file]):
+    st.warning("⚠️ Carga todos los archivos para continuar.")
     st.stop()
 
-# ==========================================================
-# INPUT FILES
-# ==========================================================
-st.header("📤 Cargar Archivos")
+# ----------------------------------------------------
+# Helper función para normalizar BOM y espacios invisibles
+# ----------------------------------------------------
+def clean_columns(df):
+    df.columns = (
+        df.columns
+        .str.replace("\ufeff", "", regex=False)  # BOM UTF-8
+        .str.replace("\u200b", "", regex=False) # Zero width
+        .str.replace("\xa0", " ", regex=False)  # NBSP
+        .str.strip()
+    )
+    return df
 
-ventas_file = st.file_uploader("Reporte de Ventas (.xlsx)", type=["xlsx"])
-performance_file = st.file_uploader("Reporte de Performance (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("Reporte de Auditorías (.csv)", type=["csv"])
-offtime_file = st.file_uploader("Reporte OFF TIME (.csv)", type=["csv"])
-
-# ==========================================================
-# PROCESAR
-# ==========================================================
-if st.button("🔄 Procesar Reportes"):
-
-    if not ventas_file or not performance_file or not auditorias_file or not offtime_file:
-        st.error("❌ Debes cargar los 4 archivos para continuar.")
-        st.stop()
+# ----------------------------------------------------
+# Cargar archivos con debug detallado
+# ----------------------------------------------------
+def debug_csv(file, name):
+    st.subheader(f"🔧 {name}")
 
     try:
-        df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
-        df_performance = pd.read_csv(performance_file, sep=",", encoding="utf-8")
-        auditorias_file.seek(0)
-        df_auditorias = pd.read_csv(auditorias_file, sep=";", encoding="utf-8-sig")
-        df_offtime = pd.read_csv(offtime_file, sep=",", encoding="utf-8-sig")
+        df = pd.read_csv(file, sep=None, engine="python", encoding="latin-1")
     except Exception as e:
-        st.error(f"❌ Error de lectura: {e}")
-        st.stop()
+        st.error(f"❌ Error detectando separador automático: {e}")
+        st.info("Intentando con separador coma ','")
 
-    # Procesamiento
-    df_diario = procesar_global(
-        df_ventas,
-        df_performance,
-        df_auditorias,
-        df_offtime,
-        date_from,
-        date_to
-    )
+        try:
+            df = pd.read_csv(file, sep=",", engine="python", encoding="latin-1")
+        except:
+            st.info("Intentando con separador ';'")
+            df = pd.read_csv(file, sep=";", engine="python", encoding="latin-1")
 
-    st.success("✔ Consolidado generado correctamente.")
-    st.subheader("📅 Resumen Diario Consolidado")
-    st.dataframe(df_diario, use_container_width=True)
+    st.write("📌 COLUMNAS ANTES DE LIMPIAR:")
+    st.write(df.columns.tolist())
 
-    # ==========================================================
-    # DESCARGA
-    # ==========================================================
-    def to_excel(df):
-        output = BytesIO()
-        writer = pd.ExcelWriter(output, engine="xlsxwriter")
-        df.to_excel(writer, index=False, sheet_name="Consolidado Diario")
-        writer.close()
-        return output.getvalue()
+    df = clean_columns(df)
 
-    st.download_button(
-        label="⬇ Descargar Excel Consolidado",
-        data=to_excel(df_diario),
-        file_name="Consolidado_Diario_Aeropuerto.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.write("📌 COLUMNAS DESPUÉS DE LIMPIAR:")
+    st.write(df.columns.tolist())
 
-else:
-    st.info("Sube los 4 archivos y presiona **Procesar Reportes**.")
+    st.write("📄 Primeras 5 filas:")
+    st.dataframe(df.head())
+
+    st.write("📊 Info del dataframe:")
+    st.write(df.dtypes)
+
+    return df
+
+
+# ----------------------------------------------------
+# Ejecutar debug para cada archivo
+# ----------------------------------------------------
+df_ventas      = pd.read_excel(ventas_file)
+st.subheader("🔧 VENTAS")
+st.write("📌 COLUMNAS ANTES:", df_ventas.columns.tolist())
+df_ventas = clean_columns(df_ventas)
+st.write("📌 COLUMNAS DESPUÉS:", df_ventas.columns.tolist())
+st.dataframe(df_ventas.head())
+
+
+df_performance = debug_csv(perf_file, "PERFORMANCE")
+df_auditorias  = debug_csv(aud_file, "AUDITORÍAS")
+df_offtime     = debug_csv(off_file, "OFFTIME")
+df_duracion    = debug_csv(dur_file, "DURACIÓN >90 MINUTOS")
+
+st.success("🔍 DEBUG completado. Copia esta información y mándamela para ajustar el processor.")
 
