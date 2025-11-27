@@ -2,9 +2,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-# =======================================================
-# HELPERS
-# =======================================================
+def log(msg):
+    print("\n" + "="*60)
+    print(msg)
+    print("="*60 + "\n")
+
 
 def normalize(df):
     df.columns = (
@@ -17,47 +19,33 @@ def normalize(df):
 
 
 def to_date(x):
-    """Convierte diferentes formatos a fecha."""
     if pd.isna(x):
         return None
     s = str(x).strip()
 
-    # YYYY/MM/DD
-    if "/" in s and len(s.split("/")[0]) == 4:
+    for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
         try:
-            return datetime.strptime(s, "%Y/%m/%d").date()
+            return datetime.strptime(s, fmt).date()
         except:
             pass
 
-    # DD-MM-YYYY
-    if "-" in s and len(s.split("-")[2]) == 4 and len(s.split("-")[0]) <= 2:
-        try:
-            return datetime.strptime(s, "%d-%m-%Y").date()
-        except:
-            pass
-
-    # MM/DD/YYYY
-    if "/" in s and len(s.split("/")[2]) == 4:
-        try:
-            return datetime.strptime(s, "%m/%d/%Y").date()
-        except:
-            pass
-
-    # Fallback
     try:
         return pd.to_datetime(s).date()
     except:
         return None
 
 
-# =======================================================
-# PROCESO: VENTAS
-# =======================================================
+# ================================
+# PROCESOS
+# ================================
 
 def process_ventas(df, date_from, date_to):
-    df = normalize(df.copy())
+    log("PROCESS VENTAS")
+    log(df.columns)
 
+    df = normalize(df.copy())
     df["fecha"] = df["date"].apply(to_date)
+
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
     df["qt_price_local"] = (
@@ -78,22 +66,18 @@ def process_ventas(df, date_from, date_to):
         axis=1,
     )
 
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Ventas_Totales": [], "Ventas_Compartidas": [], "Ventas_Exclusivas": []})
-
     return df.groupby("fecha", as_index=False)[
         ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
     ].sum()
 
 
-# =======================================================
-# PROCESO: PERFORMANCE
-# =======================================================
-
 def process_performance(df, date_from, date_to):
-    df = normalize(df.copy())
+    log("PROCESS PERFORMANCE")
+    log(df.columns)
 
+    df = normalize(df.copy())
     df = df[df["Group Support Service"] == "C_Ops Support"]
+
     df["fecha"] = df["Fecha de Referencia"].apply(to_date)
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
@@ -101,7 +85,6 @@ def process_performance(df, date_from, date_to):
         lambda x: 1 if ((not pd.isna(x.get("CSAT"))) or (not pd.isna(x.get("NPS Score")))) else 0,
         axis=1,
     )
-
     df["Q_Tickets"] = 1
     df["Q_Tickets_Resueltos"] = df["Status"].apply(
         lambda x: 1 if str(x).strip().lower() == "solved" else 0
@@ -110,13 +93,6 @@ def process_performance(df, date_from, date_to):
     convertibles = ["CSAT", "NPS Score", "Firt (h)", "Furt (h)", "% Firt", "% Furt", "Reopen"]
     for col in convertibles:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if df.empty:
-        return pd.DataFrame({
-            "fecha": [], "Q_Encuestas": [], "CSAT": [], "NPS": [],
-            "FIRT": [], "%FIRT": [], "FURT": [], "%FURT": [],
-            "Q_Reopen": [], "Q_Tickets": [], "Q_Tickets_Resueltos": []
-        })
 
     out = df.groupby("fecha", as_index=False).agg({
         "Q_Encuestas": "sum",
@@ -141,21 +117,16 @@ def process_performance(df, date_from, date_to):
     })
 
 
-# =======================================================
-# PROCESO: AUDITORÍAS
-# =======================================================
-
 def process_auditorias(df, date_from, date_to):
-    df = normalize(df.copy())
+    log("PROCESS AUDITORIAS")
+    log(df.columns)
 
+    df = normalize(df.copy())
     df["fecha"] = df["Date Time"].apply(to_date)
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
     df["Q_Auditorias"] = 1
     df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce")
-
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Q_Auditorias": [], "Nota_Auditorias": []})
 
     return df.groupby("fecha", as_index=False).agg({
         "Q_Auditorias": "sum",
@@ -163,34 +134,26 @@ def process_auditorias(df, date_from, date_to):
     })
 
 
-# =======================================================
-# PROCESO: OFF TIME
-# =======================================================
-
 def process_off_time(df, date_from, date_to):
+    log("PROCESS OFFTIME")
+    log(df.columns)
+
     df = normalize(df.copy())
 
-    df["fecha"] = pd.to_datetime(
-        df["tm_airport_arrival_requested_local_at"], errors="coerce"
-    ).dt.date
-
+    df["fecha"] = pd.to_datetime(df["tm_airport_arrival_requested_local_at"], errors="coerce").dt.date
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
     df["Q_Reservas_Off_Time"] = df["Segment Arrived to Airport vs Requested"].apply(
         lambda x: 1 if str(x).strip() != "02. A tiempo (0-20 min antes)" else 0
     )
 
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Q_Reservas_Off_Time": []})
-
     return df.groupby("fecha", as_index=False)[["Q_Reservas_Off_Time"]].sum()
 
 
-# =======================================================
-# PROCESO: DURACIÓN >90 MINUTOS
-# =======================================================
-
 def process_duracion(df, date_from, date_to):
+    log("PROCESS DURACION >90")
+    log(df.columns)
+
     df = normalize(df.copy())
 
     df["fecha"] = df["Start At Local Dt"].apply(to_date)
@@ -199,19 +162,15 @@ def process_duracion(df, date_from, date_to):
     df["Duration (Minutes)"] = pd.to_numeric(df["Duration (Minutes)"], errors="coerce")
 
     df["Q_Viajes_90mas"] = df["Duration (Minutes)"].apply(
-        lambda x: 1 if pd.notna(x) and x > 90 else 0
+        lambda x: 1 if (pd.notna(x) and x > 90) else 0
     )
-
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Q_Viajes_90mas": []})
 
     return df.groupby("fecha", as_index=False)[["Q_Viajes_90mas"]].sum()
 
 
-# =======================================================
+# ============================================================
 # CONSOLIDADO
-# =======================================================
-
+# ============================================================
 def build_daily_global(dfs):
     merged = None
     for df in dfs:
@@ -223,25 +182,24 @@ def build_daily_global(dfs):
 
     merged = merged.sort_values("fecha")
 
-    Q_cols = [
-        "Q_Encuestas", "Q_Tickets", "Q_Tickets_Resueltos",
-        "Q_Reopen", "Q_Auditorias",
-        "Q_Reservas_Off_Time", "Q_Viajes_90mas",
-        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
-    ]
-
-    for col in Q_cols:
-        if col in merged.columns:
+    for col in merged.columns:
+        if col.startswith("Q_") or col.startswith("Ventas"):
             merged[col] = merged[col].fillna(0)
 
     return merged
 
 
-# =======================================================
+# ============================================================
 # FUNCIÓN PRINCIPAL
-# =======================================================
-
+# ============================================================
 def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
+
+    log("GLOBAL INPUT – COLUMNAS DE ENTRADA")
+    log(df_ventas.columns)
+    log(df_perf.columns)
+    log(df_aud.columns)
+    log(df_off.columns)
+    log(df_dur.columns)
 
     ventas = process_ventas(df_ventas, date_from, date_to)
     performance = process_performance(df_perf, date_from, date_to)
@@ -249,4 +207,6 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     offtime = process_off_time(df_off, date_from, date_to)
     duracion = process_duracion(df_dur, date_from, date_to)
 
+    log("GLOBAL – MERGE FINAL")
     return build_daily_global([ventas, performance, auditorias, offtime, duracion])
+
