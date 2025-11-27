@@ -1,220 +1,229 @@
 import pandas as pd
-import numpy as np
-from datetime import datetime
 
-# =======================================================
-# HELPERS
-# =======================================================
 
-def normalize(df):
+# ============================================================
+# UTILIDAD: Normalizar y limpiar encabezados
+# ============================================================
+def limpiar_encabezados(df):
     df.columns = (
-        df.columns.astype(str)
-        .str.replace("﻿", "")
-        .str.replace('"', "")
+        df.columns
+        .str.replace("ï»¿", "", regex=False)     # BOM
+        .str.replace("\ufeff", "", regex=False)  # UTF BOM
+        .str.replace("\xa0", " ", regex=False)   # NBSP
+        .str.replace('"', "", regex=False)       # comillas
         .str.strip()
     )
     return df
 
 
-def to_date(x):
-    """Convierte diferentes formatos a fecha."""
-    if pd.isna(x):
-        return None
-    s = str(x).strip()
+# ============================================================
+# UTILIDAD: Convertir fechas
+# ============================================================
+def parse_date_series(s, dayfirst=False):
+    return pd.to_datetime(s, errors="coerce", dayfirst=dayfirst)
 
-    # YYYY/MM/DD
-    if "/" in s and len(s.split("/")[0]) == 4:
-        try:
-            return datetime.strptime(s, "%Y/%m/%d").date()
-        except:
-            pass
 
-    # DD-MM-YYYY
-    if "-" in s and len(s.split("-")[2]) == 4 and len(s.split("-")[0]) <= 2:
-        try:
-            return datetime.strptime(s, "%d-%m-%Y").date()
-        except:
-            pass
+# ============================================================
+# PROCESAMIENTO DE VENTAS
+# ============================================================
+def process_ventas(df):
+    df = df.copy()
+    df = limpiar_encabezados(df)
 
-    # MM/DD/YYYY
-    if "/" in s and len(s.split("/")[2]) == 4:
-        try:
-            return datetime.strptime(s, "%m/%d/%Y").date()
-        except:
-            pass
+    df["fecha"] = parse_date_series(df["tm_start_local_at"], dayfirst=False)
+    df["fecha"] = df["fecha"].dt.date   # ← SOLO FECHA
 
-    # Fallback
+    # Monto
     try:
-        return pd.to_datetime(s).date()
+        df["qt_price_local"] = pd.to_numeric(
+            df["qt_price_local"].astype(str)
+            .str.replace(",", "")
+            .str.replace(".", ""),
+            errors="coerce"
+        )
     except:
-        return None
+        df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
 
-
-# =======================================================
-# PROCESOS INDIVIDUALES
-# =======================================================
-
-def process_ventas(df, date_from, date_to):
-    df = normalize(df.copy())
-
-    df["fecha"] = df["date"].apply(to_date)
-    df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
-
-    df["qt_price_local"] = (
-        df["qt_price_local"].astype(str)
-        .str.replace(",", "")
-        .str.replace("$", "")
-        .str.strip()
+    df["Venta_Total"] = df["qt_price_local"]
+    df["Venta_Compartida"] = df.apply(
+        lambda x: x["qt_price_local"] if x["ds_product_name"] == "van_compartida" else 0,
+        axis=1
     )
-    df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce").fillna(0)
-
-    df["Ventas_Totales"] = df["qt_price_local"]
-    df["Ventas_Compartidas"] = df.apply(
-        lambda x: x["qt_price_local"] if str(x["ds_product_name"]).lower() == "van_compartida" else 0,
-        axis=1,
-    )
-    df["Ventas_Exclusivas"] = df.apply(
-        lambda x: x["qt_price_local"] if str(x["ds_product_name"]).lower() == "van_exclusive" else 0,
-        axis=1,
+    df["Venta_Exclusiva"] = df.apply(
+        lambda x: x["qt_price_local"] if x["ds_product_name"] == "van_exclusive" else 0,
+        axis=1
     )
 
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Ventas_Totales": [], "Ventas_Compartidas": [], "Ventas_Exclusivas": []})
+    df_group = df.groupby("fecha", as_index=False).agg({
+        "Venta_Total": "sum",
+        "Venta_Compartida": "sum",
+        "Venta_Exclusiva": "sum"
+    })
 
-    return df.groupby("fecha", as_index=False)[
-        ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
-    ].sum()
+    return df_group
 
 
-def process_performance(df, date_from, date_to):
-    df = normalize(df.copy())
+# ============================================================
+# PROCESAMIENTO DE PERFORMANCE (detecta Firt/Furt)
+# ============================================================
+def process_performance(df):
+    df = df.copy()
+    df = limpiar_encabezados(df)
 
+    print("ENCABEZADOS PERFORMANCE:", list(df.columns))
+
+    # Detectar columna fecha
+    posibles_fechas = ["Fecha de Referencia", "fecha", "Date", "Reference Date"]
+    col_fecha = next((c for c in posibles_fechas if c in df.columns), None)
+
+    if col_fecha is None:
+        raise ValueError(f"No se encontró columna fecha en Performance. Columnas: {list(df.columns)}")
+
+    df["fecha"] = parse_date_series(df[col_fecha], dayfirst=False)
+    df["fecha"] = df["fecha"].dt.date   # ← SOLO FECHA
+
+    # Filtrar solo C_Ops Support
     df = df[df["Group Support Service"] == "C_Ops Support"]
-    df["fecha"] = df["Fecha de Referencia"].apply(to_date)
-    df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
+    # Detectar % Firt
+    posibles_firt = ["% Firt", "%Firt", "Firt %", "Firt%", "FIRT", "% FIRT"]
+    col_firt = next((c for c in posibles_firt if c in df.columns), None)
+    if col_firt is None:
+        raise ValueError(f"No existe columna equivalente a % Firt. Columnas: {list(df.columns)}")
+
+    df[col_firt] = pd.to_numeric(df[col_firt], errors="coerce")
+    df = df.rename(columns={col_firt: "% Firt"})
+
+    # Detectar % Furt
+    posibles_furt = ["% Furt", "%Furt", "Furt %", "Furt%", "FURT", "% FURT"]
+    col_furt = next((c for c in posibles_furt if c in df.columns), None)
+    if col_furt is None:
+        raise ValueError(f"No existe columna equivalente a % Furt. Columnas: {list(df.columns)}")
+
+    df[col_furt] = pd.to_numeric(df[col_furt], errors="coerce")
+    df = df.rename(columns={col_furt: "% Furt"})
+
+    # Encuestas
     df["Q_Encuestas"] = df.apply(
-        lambda x: 1 if ((not pd.isna(x.get("CSAT"))) or (not pd.isna(x.get("NPS Score")))) else 0,
-        axis=1,
+        lambda x: 1 if not pd.isna(x.get("CSAT")) or not pd.isna(x.get("NPS Score")) else 0,
+        axis=1
     )
 
     df["Q_Tickets"] = 1
-    df["Q_Tickets_Resueltos"] = df["Status"].apply(
-        lambda x: 1 if str(x).strip().lower() == "solved" else 0
-    )
+    df["Q_Tickets_Resueltos"] = df["Status"].apply(lambda x: 1 if str(x).lower() == "solved" else 0)
 
-    convertibles = ["CSAT", "NPS Score", "Firt (h)", "Furt (h)", "% Firt", "% Furt", "Reopen"]
-    for col in convertibles:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if df.empty:
-        return pd.DataFrame({
-            "fecha": [], "Q_Encuestas": [], "CSAT": [], "NPS": [],
-            "FIRT": [], "%FIRT": [], "FURT": [], "%FURT": [],
-            "Q_Reopen": [], "Q_Tickets": [], "Q_Tickets_Resueltos": []
-        })
-
-    out = df.groupby("fecha", as_index=False).agg({
+    perf_group = df.groupby("fecha", as_index=False).agg({
         "Q_Encuestas": "sum",
-        "CSAT": "mean",
-        "NPS Score": "mean",
-        "Firt (h)": "mean",
         "% Firt": "mean",
-        "Furt (h)": "mean",
         "% Furt": "mean",
+        "Firt (h)": "mean",
+        "Furt (h)": "mean",
+        "NPS Score": "mean",
+        "CSAT": "mean",
         "Reopen": "sum",
         "Q_Tickets": "sum",
-        "Q_Tickets_Resueltos": "sum",
+        "Q_Tickets_Resueltos": "sum"
     })
 
-    return out.rename(columns={
-        "NPS Score": "NPS",
-        "Firt (h)": "FIRT",
-        "% Firt": "%FIRT",
-        "Furt (h)": "FURT",
-        "% Furt": "%FURT",
-        "Reopen": "Q_Reopen"
-    })
+    return perf_group
 
 
-def process_auditorias(df, date_from, date_to):
-    df = normalize(df.copy())
+# ============================================================
+# PROCESAMIENTO DE AUDITORÍAS
+# ============================================================
+def process_auditorias(df):
+    df = df.copy()
+    df = limpiar_encabezados(df)
 
-    df["fecha"] = df["Date Time"].apply(to_date)
-    df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
+    print("ENCABEZADOS AUDITORÍAS:", list(df.columns))
 
-    df["Q_Auditorias"] = 1
-    df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce")
-
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Q_Auditorias": [], "Nota_Auditorias": []})
-
-    return df.groupby("fecha", as_index=False).agg({
-        "Q_Auditorias": "sum",
-        "Nota_Auditorias": "mean"
-    })
-
-
-def process_off_time(df, date_from, date_to):
-    df = normalize(df.copy())
-
-    df["fecha"] = pd.to_datetime(
-        df["tm_airport_arrival_requested_local_at"], errors="coerce"
-    ).dt.date
-
-    df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
-
-    df["Q_Reservas_Off_Time"] = df["Segment Arrived to Airport vs Requested"].apply(
-        lambda x: 1 if str(x).strip() != "02. A tiempo (0-20 min antes)" else 0
-    )
-
-    if df.empty:
-        return pd.DataFrame({"fecha": [], "Q_Reservas_Off_Time": []})
-
-    return df.groupby("fecha", as_index=False)[["Q_Reservas_Off_Time"]].sum()
-
-
-# =======================================================
-# CONSOLIDADO
-# =======================================================
-
-def build_daily_global(dfs):
-    merged = None
-    for df in dfs:
-        if df is not None and not df.empty:
-            merged = df if merged is None else pd.merge(merged, df, on="fecha", how="outer")
-
-    if merged is None:
-        return pd.DataFrame()
-
-    merged = merged.sort_values("fecha")
-
-    Q_cols = [
-        "Q_Encuestas", "Q_Tickets", "Q_Tickets_Resueltos",
-        "Q_Reopen", "Q_Auditorias",
-        "Q_Reservas_Off_Time", "Ventas_Totales",
-        "Ventas_Compartidas", "Ventas_Exclusivas"
+    posibles_fechas = [
+        "Date Time", "DateTime", "Date_Time", "Date time", "Date",
+        "Fecha", "Audited At UTC Dt", "Date Time Reference", "Submission Audit Dttm UTC"
     ]
 
-    for col in Q_cols:
-        if col in merged.columns:
-            merged[col] = merged[col].fillna(0)
+    col_fecha = next((c for c in posibles_fechas if c in df.columns), None)
+    if col_fecha is None:
+        raise ValueError(f"No se encontró columna de fecha en Auditorías. Columnas: {list(df.columns)}")
 
-    return merged
+    df["fecha"] = parse_date_series(df[col_fecha], dayfirst=True)
+    df["fecha"] = df["fecha"].dt.date   # ← SOLO FECHA
+
+    df["Nota_Auditoria"] = pd.to_numeric(df.get("Total Audit Score", None), errors="coerce")
+    df["Q_Auditorias"] = pd.to_numeric(df.get("# Audits by Agent", 1), errors="coerce").fillna(1)
+
+    out = df.groupby("fecha", as_index=False).agg({
+        "Nota_Auditoria": "mean",
+        "Q_Auditorias": "sum"
+    })
+
+    return out
 
 
-# =======================================================
-# FUNCIÓN PRINCIPAL
-# =======================================================
+# ============================================================
+# PROCESAMIENTO OFF TIME
+# ============================================================
+def process_offtime(df):
+    df = df.copy()
+    df = limpiar_encabezados(df)
 
-def procesar_global(df_ventas, df_performance, df_auditorias, df_offtime, date_from, date_to):
+    df["fecha"] = parse_date_series(df["tm_start_local_at"], dayfirst=False)
+    df["fecha"] = df["fecha"].dt.date   # ← SOLO FECHA
 
-    ventas = process_ventas(df_ventas, date_from, date_to)
-    performance = process_performance(df_performance, date_from, date_to)
-    auditorias = process_auditorias(df_auditorias, date_from, date_to)
-    offtime = process_off_time(df_offtime, date_from, date_to)
+    df["OFFTIME"] = df.apply(
+        lambda x: 1 if x["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)" else 0,
+        axis=1
+    )
 
-    diario = build_daily_global([ventas, performance, auditorias, offtime])
+    return df.groupby("fecha", as_index=False).agg({"OFFTIME": "sum"})
 
-    return diario
+
+# ============================================================
+# PROCESAMIENTO VIAJES > 90 MINUTOS
+# ============================================================
+def process_mayor90(df):
+    df = df.copy()
+    df = limpiar_encabezados(df)
+
+    df["fecha"] = parse_date_series(df["Start At Local Dt"], dayfirst=False)
+    df["fecha"] = df["fecha"].dt.date   # ← SOLO FECHA
+
+    df["LARGOS"] = df["Duration (Minutes)"].apply(lambda x: 1 if x > 90 else 0)
+
+    return df.groupby("fecha", as_index=False).agg({"LARGOS": "sum"})
+
+
+# ============================================================
+# CONSOLIDADO GLOBAL FINAL
+# ============================================================
+def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
+    ventas = process_ventas(df_ventas)
+    perf = process_performance(df_perf)
+    aud = process_auditorias(df_aud)
+    off = process_offtime(df_off)
+    dur = process_mayor90(df_dur)
+
+    df = ventas.merge(perf, on="fecha", how="outer")
+    df = df.merge(aud, on="fecha", how="outer")
+    df = df.merge(off, on="fecha", how="outer")
+    df = df.merge(dur, on="fecha", how="outer")
+
+    # Filtrar fechas
+    fmin = pd.to_datetime(date_from)
+    fmax = pd.to_datetime(date_to)
+
+    df = df[(pd.to_datetime(df["fecha"]) >= fmin) &
+            (pd.to_datetime(df["fecha"]) <= fmax)]
+
+    # Variables Q que se rellenan con 0
+    q_vars = [
+        "Q_Encuestas", "Q_Tickets", "Q_Tickets_Resueltos",
+        "Reopen", "Q_Auditorias", "OFFTIME", "LARGOS"
+    ]
+    for c in q_vars:
+        if c in df.columns:
+            df[c] = df[c].fillna(0)
+
+    return df.sort_values("fecha")
+
 
