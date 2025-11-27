@@ -5,31 +5,27 @@ import os
 import sys
 
 # ==========================================================
-#   FIX DEFINITIVO PARA ModuleNotFoundError
+# FIX DEFINITIVO PARA ModuleNotFoundError
 # ==========================================================
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Limpiar sys.path de entradas inválidas
+# Limpiar sys.path de rutas inválidas
 cleaned = []
 for p in sys.path:
-    if p and p != "app.py":   # descartar rutas vacías o inválidas
+    if p and p != "app.py":
         cleaned.append(p)
 sys.path = cleaned
 
-# Asegurar que el directorio actual está en sys.path
+# Asegurar que la ruta actual está incluida
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-# Debug (puedes desactivarlo luego)
-st.write("📂 Working Directory:", CURRENT_DIR)
-st.write("🔍 Cleaned sys.path:", sys.path)
-
-# Ahora sí importamos
+# Importar módulo de procesamiento
 from processor import procesar_global
 
 # ==========================================================
-#   CONFIG DE LA APP
+# CONFIG DE LA APP
 # ==========================================================
 st.set_page_config(page_title="Reporte Diario Consolidado", layout="wide")
 st.title("🟦 Reporte Diario Consolidado – Aeropuerto Cabify")
@@ -40,7 +36,7 @@ para generar un **resumen diario general**, sin distinguir agentes.
 """)
 
 # ==========================================================
-#   CARGA DE ARCHIVOS
+# CARGA DE ARCHIVOS
 # ==========================================================
 st.header("📤 Cargar Archivos")
 
@@ -64,7 +60,7 @@ auditorias_file = st.file_uploader(
 )
 
 # ==========================================================
-#   PROCESAR REPORTES
+# PROCESAR REPORTES
 # ==========================================================
 if st.button("🔄 Procesar Reportes"):
 
