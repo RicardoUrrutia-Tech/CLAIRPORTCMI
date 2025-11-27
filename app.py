@@ -1,45 +1,39 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-import os
-import sys
+import os, sys
 
 # ==========================================================
-# FIX PRO IMPORT
+# FIX IMPORT PATH
 # ==========================================================
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-cleaned = []
-for p in sys.path:
-    if p and p != "app.py":
-        cleaned.append(p)
-sys.path = cleaned
-
+sys.path = [p for p in sys.path if p and p != "app.py"]
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
 from processor import procesar_global
 
 # ==========================================================
-# CONFIG
+# CONFIG STREAMLIT
 # ==========================================================
 st.set_page_config(page_title="Reporte Diario Consolidado", layout="wide")
 st.title("🟦 Reporte Diario Consolidado – Aeropuerto Cabify")
 
 st.markdown("""
 Esta aplicación consolida los reportes de **Ventas**, **Performance**, **Auditorías**
-y **Reservas OFF TIME**, obteniendo un **informe diario completo**.
+y **Reservas OFF TIME**, generando un **informe diario**.
 """)
 
 # ==========================================================
-# CARGA DE ARCHIVOS
+# INPUT FILES
 # ==========================================================
 st.header("📤 Cargar Archivos")
 
 ventas_file = st.file_uploader("Reporte de Ventas (.xlsx)", type=["xlsx"])
 performance_file = st.file_uploader("Reporte de Performance (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("Reporte de Auditorías (.csv ;)", type=["csv"])
-offtime_file = st.file_uploader("Reporte Reservas OFF TIME (.csv)", type=["csv"])
+auditorias_file = st.file_uploader("Reporte de Auditorías (.csv)", type=["csv"])
+offtime_file = st.file_uploader("Reporte OFF TIME (.csv)", type=["csv"])
+
 
 # ==========================================================
 # PROCESAR
@@ -47,27 +41,23 @@ offtime_file = st.file_uploader("Reporte Reservas OFF TIME (.csv)", type=["csv"]
 if st.button("🔄 Procesar Reportes"):
 
     if not ventas_file or not performance_file or not auditorias_file or not offtime_file:
-        st.error("❌ Debes cargar los 4 archivos para continuar.")
+        st.error("❌ Debes cargar los 4 archivos primero.")
         st.stop()
 
-    # Ventas
+    # --- Ventas ---
     try:
         df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
     except Exception as e:
         st.error(f"❌ Error en Ventas: {e}")
         st.stop()
 
-    # Performance
+    # --- Performance ---
     try:
         df_performance = pd.read_csv(performance_file, sep=",", encoding="utf-8")
     except:
-        try:
-            df_performance = pd.read_csv(performance_file, sep=",", encoding="latin-1")
-        except Exception as e:
-            st.error(f"❌ Error en Performance: {e}")
-            st.stop()
+        df_performance = pd.read_csv(performance_file, sep=",", encoding="latin-1")
 
-    # Auditorías
+    # --- Auditorías ---
     try:
         auditorias_file.seek(0)
         df_auditorias = pd.read_csv(auditorias_file, sep=";", encoding="utf-8-sig")
@@ -75,7 +65,7 @@ if st.button("🔄 Procesar Reportes"):
         st.error(f"❌ Error en Auditorías: {e}")
         st.stop()
 
-    # OFF TIME
+    # --- OFF TIME ---
     try:
         df_offtime = pd.read_csv(offtime_file, sep=",", encoding="utf-8-sig")
     except Exception as e:
@@ -83,22 +73,27 @@ if st.button("🔄 Procesar Reportes"):
         st.stop()
 
     # ==========================================================
-    # PROCESAMIENTO GENERAL
+    # DEBUG: VER LO QUE LEE STREAMLIT
     # ==========================================================
-    df_diario = procesar_global(
-        df_ventas, df_performance, df_auditorias, df_offtime
-    )
+    st.subheader("🧪 DEBUG – Vista previa de datos cargados")
 
-    st.success("✔ Reporte generado correctamente.")
-    st.header("📅 Resumen Diario Consolidado")
+    st.write("VENTAS HEAD:", df_ventas.head())
+    st.write("PERFORMANCE HEAD:", df_performance.head())
+    st.write("AUDITORIAS HEAD:", df_auditorias.head())
+    st.write("OFF TIME HEAD:", df_offtime.head())
 
+    # ==========================================================
+    # PROCESAR CONSOLIDADO
+    # ==========================================================
+    df_diario = procesar_global(df_ventas, df_performance, df_auditorias, df_offtime)
+
+    st.success("✔ Consolidados generados correctamente.")
+    st.subheader("📅 Resumen Diario Consolidado")
     st.dataframe(df_diario, use_container_width=True)
 
     # ==========================================================
     # DESCARGA
     # ==========================================================
-    st.header("📥 Descargar Consolidado")
-
     def to_excel(df):
         output = BytesIO()
         writer = pd.ExcelWriter(output, engine="xlsxwriter")
@@ -110,7 +105,7 @@ if st.button("🔄 Procesar Reportes"):
         label="⬇ Descargar Excel Consolidado",
         data=to_excel(df_diario),
         file_name="Consolidado_Diario_Aeropuerto.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 else:
