@@ -1,142 +1,119 @@
 import streamlit as st
 import pandas as pd
-import csv
-from processor import procesar_global
+from io import BytesIO
+from processor import procesar_global, resumen_periodo, resumen_semanal
 
-st.set_page_config(page_title="CMI Diario – Global", layout="wide")
-st.title("🟦 Consolidado Diario – Global (Ventas / Performance / Auditorías / OffTime / >90 min)")
+st.set_page_config(page_title="CMI Global Airport", layout="wide")
+st.title("🟦 Consolidado Diario / Semanal / Periodo – Aeropuerto")
 
-# =====================================================
-# SUBIR ARCHIVOS
-# =====================================================
+st.markdown("Carga los 5 archivos requeridos para generar los reportes consolidados.")
 
-st.header("📤 Carga de Archivos")
+# ===========================================================
+# CARGA DE ARCHIVOS
+# ===========================================================
+ventas_file = st.file_uploader("📤 Reporte VENTAS (.xlsx)", type=["xlsx"])
+perf_file = st.file_uploader("📤 Reporte PERFORMANCE (.csv)", type=["csv"])
+aud_file = st.file_uploader("📤 Reporte AUDITORÍAS (.csv)", type=["csv"])
+off_file = st.file_uploader("📤 Reporte OFF-TIME (.csv)", type=["csv"])
+dur_file = st.file_uploader("📤 Reporte DURACIÓN+90 (.csv)", type=["csv"])
 
-ventas_file = st.file_uploader("Cargar reporte de Ventas (.xlsx)", type=["xlsx"])
-performance_file = st.file_uploader("Cargar reporte de Performance (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("Cargar reporte de Auditorías (.csv)", type=["csv"])
-offtime_file = st.file_uploader("Cargar reporte de OffTime (.csv)", type=["csv"])
-duracion_file = st.file_uploader("Cargar reporte DO > 90 min (.csv)", type=["csv"])
+st.divider()
 
-# =====================================================
-# FILTRO DE FECHAS
-# =====================================================
-
-st.header("📅 Filtro de Fechas")
+# ===========================================================
+# FILTROS DE FECHAS
+# ===========================================================
+st.subheader("📅 Filtro de Fechas")
 col1, col2 = st.columns(2)
-date_from = col1.date_input("Fecha desde")
-date_to = col2.date_input("Fecha hasta")
 
-if not all([ventas_file, performance_file, auditorias_file, offtime_file, duracion_file]):
-    st.info("🔄 Sube todos los archivos para continuar...")
-    st.stop()
+date_from = col1.date_input("Fecha inicial", None)
+date_to = col2.date_input("Fecha final", None)
 
-# =====================================================
-# LECTURA DE ARCHIVOS
-# =====================================================
+st.divider()
 
-# VENTAS ------------------------------------------------
-try:
-    df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
-except Exception as e:
-    st.error(f"❌ Error en Ventas: {e}")
-    st.stop()
+# ===========================================================
+# PROCESAR DATOS
+# ===========================================================
+if ventas_file and perf_file and aud_file and off_file and dur_file:
 
-# PERFORMANCE ------------------------------------------
-try:
-    df_performance = pd.read_csv(
-        performance_file,
-        sep=",",
-        encoding="latin-1",
-        engine="python"
+    try:
+        df_ventas = pd.read_excel(ventas_file)
+        df_perf = pd.read_csv(perf_file, sep=",", engine="python", encoding="latin-1")
+        df_aud = pd.read_csv(aud_file, sep=",", engine="python", encoding="latin-1")
+        df_off = pd.read_csv(off_file, sep=",", engine="python", encoding="latin-1")
+        df_dur = pd.read_csv(dur_file, sep=",", engine="python", encoding="latin-1")
+
+    except Exception as e:
+        st.error(f"❌ Error leyendo archivos: {e}")
+        st.stop()
+
+    # =======================================================
+    # PROCESAMIENTO GLOBAL
+    # =======================================================
+    try:
+        df_final = procesar_global(
+            df_ventas, df_perf, df_aud, df_off, df_dur,
+            date_from, date_to
+        )
+    except Exception as e:
+        st.error(f"❌ Error al procesar datos: {e}")
+        st.stop()
+
+    st.success("✔ Datos procesados correctamente")
+    st.divider()
+
+    # =======================================================
+    # DESCARGA A EXCEL
+    # =======================================================
+    def crear_excel(df):
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Reporte")
+        buffer.seek(0)
+        return buffer
+
+    # ----------------------------------------
+    st.header("📄 Reporte Diario Consolidado")
+    st.dataframe(df_final, width="stretch")
+
+    st.download_button(
+        "📥 Descargar Excel Diario",
+        crear_excel(df_final),
+        "CMI_Diario.xlsx"
     )
-except Exception as e:
-    st.error(f"❌ Error en Performance: {e}")
-    st.stop()
 
-# AUDITORÍAS (LECTOR INTELIGENTE) ----------------------
-try:
-    raw = auditorias_file.read().decode("latin-1")
-    auditorias_file.seek(0)
+    st.divider()
 
-    dialect = csv.Sniffer().sniff(raw, delimiters=";,|\t")
-    detected_sep = dialect.delimiter
+    # =======================================================
+    # RESUMEN PERIODO
+    # =======================================================
+    st.header("📊 Resumen General del Periodo")
 
-    df_auditorias = pd.read_csv(
-        auditorias_file,
-        sep=detected_sep,
-        encoding="latin-1",
-        engine="python"
+    df_resumen = resumen_periodo(df_final)
+    st.dataframe(df_resumen, width="stretch")
+
+    st.download_button(
+        "📥 Descargar Resumen Periodo",
+        crear_excel(df_resumen),
+        "CMI_Resumen_Periodo.xlsx"
     )
 
-except Exception as e:
-    st.error(f"❌ Error al leer Auditorías: {e}")
-    st.stop()
+    st.divider()
 
-# OFF TIME ---------------------------------------------
-try:
-    df_off = pd.read_csv(
-        offtime_file,
-        sep=",",
-        encoding="latin-1",
-        engine="python"
+    # =======================================================
+    # RESUMEN SEMANAL
+    # =======================================================
+    st.header("📆 Resumen Semanal (Formato Humano)")
+
+    df_semanal = resumen_semanal(df_final)
+    st.dataframe(df_semanal, width="stretch")
+
+    st.download_button(
+        "📥 Descargar Resumen Semanal",
+        crear_excel(df_semanal),
+        "CMI_Resumen_Semanal.xlsx"
     )
-except Exception as e:
-    st.error(f"❌ Error en OffTime: {e}")
-    st.stop()
-
-# DURACIÓN > 90 ----------------------------------------
-try:
-    df_dur = pd.read_csv(
-        duracion_file,
-        sep=",",
-        encoding="latin-1",
-        engine="python"
-    )
-except Exception as e:
-    st.error(f"❌ Error en Duración >90: {e}")
-    st.stop()
 
 
-# =====================================================
-# PROCESAR TODO
-# =====================================================
-st.header("⚙ Procesando...")
-
-try:
-    df_final = procesar_global(
-        df_ventas,
-        df_performance,
-        df_auditorias,
-        df_off,
-        df_dur,
-        date_from,
-        date_to
-    )
-except Exception as e:
-    st.error(f"❌ Error al procesar datos: {e}")
-    st.stop()
-
-
-# =====================================================
-# SALIDA FINAL
-# =====================================================
-
-st.success("✅ Procesamiento completado")
-
-st.header("📄 Resultado Diario Consolidado")
-st.dataframe(df_final, use_container_width=True)
-
-# DESCARGA -------------------------------------------------
-
-@st.cache_data
-def descargar(df):
-    return df.to_csv(index=False).encode("utf-8-sig")
-
-st.download_button(
-    "📥 Descargar CSV Consolidado",
-    data=descargar(df_final),
-    file_name="CMI_Global_Diario.csv",
-    mime="text/csv"
-)
+else:
+    st.info("⚠️ Debes cargar los 5 archivos para continuar.")
 
