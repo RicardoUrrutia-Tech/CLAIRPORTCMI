@@ -1,102 +1,115 @@
 import streamlit as st
 import pandas as pd
+import csv
 from processor import procesar_global
 
-st.set_page_config(page_title="CMI Aeropuerto – Consolidado Diario", layout="wide")
-st.title("🟦 CMI Aeropuerto – Consolidado Diario Global")
-
-st.markdown("Esta aplicación consolida Ventas, Performance, Auditorías, Reservas Off-Time y Viajes >90min.")
+st.set_page_config(page_title="CMI Diario – Global", layout="wide")
+st.title("🟦 Consolidado Diario – Global (Ventas / Performance / Auditorías / OffTime / >90 min)")
 
 # =====================================================
-# CARGA DE ARCHIVOS
+# SUBIR ARCHIVOS
 # =====================================================
-st.header("📂 Cargar Archivos")
 
-ventas_file = st.file_uploader("1) Cargar Ventas (.xlsx)", type=["xlsx"])
-performance_file = st.file_uploader("2) Cargar Performance (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("3) Cargar Auditorías (.csv)", type=["csv"])
-offtime_file = st.file_uploader("4) Cargar Reservas Off-Time (.csv)", type=["csv"])
-duracion_file = st.file_uploader("5) Cargar Viajes >90 Minutos (.csv)", type=["csv"])
+st.header("📤 Carga de Archivos")
 
-if not (ventas_file and performance_file and auditorias_file and offtime_file and duracion_file):
-    st.info("👆 Sube los 5 archivos para continuar.")
-    st.stop()
+ventas_file = st.file_uploader("Cargar reporte de Ventas (.xlsx)", type=["xlsx"])
+performance_file = st.file_uploader("Cargar reporte de Performance (.csv)", type=["csv"])
+auditorias_file = st.file_uploader("Cargar reporte de Auditorías (.csv)", type=["csv"])
+offtime_file = st.file_uploader("Cargar reporte de OffTime (.csv)", type=["csv"])
+duracion_file = st.file_uploader("Cargar reporte DO > 90 min (.csv)", type=["csv"])
 
 # =====================================================
-# RANGO DE FECHAS
+# FILTRO DE FECHAS
 # =====================================================
-st.header("📅 Seleccionar Rango de Fechas")
 
-date_from = st.date_input("Fecha Desde")
-date_to = st.date_input("Fecha Hasta")
+st.header("📅 Filtro de Fechas")
+col1, col2 = st.columns(2)
+date_from = col1.date_input("Fecha desde")
+date_to = col2.date_input("Fecha hasta")
 
-if not (date_from and date_to):
-    st.warning("Seleccione un rango de fechas válido.")
-    st.stop()
-
-# Convertir fechas
-date_from = pd.to_datetime(date_from)
-date_to = pd.to_datetime(date_to)
-
-if date_from > date_to:
-    st.error("La fecha inicial no puede ser mayor que la fecha final.")
+if not all([ventas_file, performance_file, auditorias_file, offtime_file, duracion_file]):
+    st.info("🔄 Sube todos los archivos para continuar...")
     st.stop()
 
 # =====================================================
 # LECTURA DE ARCHIVOS
 # =====================================================
-st.header("⚙️ Procesamiento de Datos")
 
+# VENTAS ------------------------------------------------
 try:
-    df_ventas = pd.read_excel(ventas_file)
+    df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
 except Exception as e:
-    st.error(f"❌ Error al leer Ventas: {e}")
+    st.error(f"❌ Error en Ventas: {e}")
     st.stop()
 
+# PERFORMANCE ------------------------------------------
 try:
     df_performance = pd.read_csv(
-        performance_file, sep=",", encoding="latin-1", engine="python"
+        performance_file,
+        sep=",",
+        encoding="latin-1",
+        engine="python"
     )
 except Exception as e:
-    st.error(f"❌ Error al leer Performance: {e}")
+    st.error(f"❌ Error en Performance: {e}")
     st.stop()
 
+# AUDITORÍAS (LECTOR INTELIGENTE) ----------------------
 try:
+    raw = auditorias_file.read().decode("latin-1")
+    auditorias_file.seek(0)
+
+    dialect = csv.Sniffer().sniff(raw, delimiters=";,|\t")
+    detected_sep = dialect.delimiter
+
     df_auditorias = pd.read_csv(
-        auditorias_file, sep=",", encoding="latin-1", engine="python"
+        auditorias_file,
+        sep=detected_sep,
+        encoding="latin-1",
+        engine="python"
     )
+
 except Exception as e:
     st.error(f"❌ Error al leer Auditorías: {e}")
     st.stop()
 
+# OFF TIME ---------------------------------------------
 try:
-    df_offtime = pd.read_csv(
-        offtime_file, sep=",", encoding="latin-1", engine="python"
+    df_off = pd.read_csv(
+        offtime_file,
+        sep=",",
+        encoding="latin-1",
+        engine="python"
     )
 except Exception as e:
-    st.error(f"❌ Error al leer Off-Time: {e}")
+    st.error(f"❌ Error en OffTime: {e}")
     st.stop()
 
+# DURACIÓN > 90 ----------------------------------------
 try:
-    df_duracion = pd.read_csv(
-        duracion_file, sep=",", encoding="latin-1", engine="python"
+    df_dur = pd.read_csv(
+        duracion_file,
+        sep=",",
+        encoding="latin-1",
+        engine="python"
     )
 except Exception as e:
-    st.error(f"❌ Error al leer Duración >90 min: {e}")
+    st.error(f"❌ Error en Duración >90: {e}")
     st.stop()
 
+
 # =====================================================
-# PROCESAMIENTO GLOBAL
+# PROCESAR TODO
 # =====================================================
-st.header("📊 Resultado Consolidado Diario")
+st.header("⚙ Procesando...")
 
 try:
-    df_result = procesar_global(
+    df_final = procesar_global(
         df_ventas,
         df_performance,
         df_auditorias,
-        df_offtime,
-        df_duracion,
+        df_off,
+        df_dur,
         date_from,
         date_to
     )
@@ -104,25 +117,26 @@ except Exception as e:
     st.error(f"❌ Error al procesar datos: {e}")
     st.stop()
 
-st.success("✔️ Datos procesados correctamente.")
-
-# Mostrar tabla
-st.dataframe(df_result, use_container_width=True)
 
 # =====================================================
-# DESCARGA
+# SALIDA FINAL
 # =====================================================
+
+st.success("✅ Procesamiento completado")
+
+st.header("📄 Resultado Diario Consolidado")
+st.dataframe(df_final, use_container_width=True)
+
+# DESCARGA -------------------------------------------------
+
 @st.cache_data
-def convert_df(df):
-    return df.to_csv(index=False).encode("utf-8")
-
-csv = convert_df(df_result)
+def descargar(df):
+    return df.to_csv(index=False).encode("utf-8-sig")
 
 st.download_button(
-    label="📥 Descargar Consolidado (CSV)",
-    data=csv,
-    file_name="CMI_Aeropuerto_Consolidado.csv",
+    "📥 Descargar CSV Consolidado",
+    data=descargar(df_final),
+    file_name="CMI_Global_Diario.csv",
     mime="text/csv"
 )
-
 
