@@ -158,6 +158,10 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     if date_to:
         df = df[df["fecha"] <= date_to]
 
-    # Si no existen
+    # Si no existen auditorías → dejar "-"
+    df["Total Audit Score"] = df["Total Audit Score"].apply(
+        lambda x: "-" if pd.isna(x) else x
+    )
 
+    return df
 
