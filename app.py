@@ -46,6 +46,7 @@ try:
         engine="python"
     )
     df_performance = clean_columns(df_performance)
+st.write("COLUMNAS PERFORMANCE:", df_performance.columns.tolist())  # 👈 AGREGAR ESTO
 
     # AUDITORÍAS (autodetectar separador)
     df_auditorias = pd.read_csv(
