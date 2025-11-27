@@ -18,14 +18,12 @@ def clean_columns(df: pd.DataFrame):
 def process_ventas(df: pd.DataFrame):
     df = clean_columns(df)
 
-    # Fecha principal
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce")
 
-    # Precios
     df["qt_price_local"] = pd.to_numeric(
         df["qt_price_local"].astype(str).str.replace(",", "").str.replace(".", "", regex=False),
         errors="coerce"
-    ) / 1000  # para compatibilidad con tus datos European style
+    ) / 1000
 
     ventas = df.groupby(df["fecha"].dt.date).agg(
         Ventas_Totales=("qt_price_local", "sum"),
@@ -36,6 +34,7 @@ def process_ventas(df: pd.DataFrame):
     return ventas
 
 
+
 # ---------------------------------------------------------------
 # PROCESAR PERFORMANCE
 # ---------------------------------------------------------------
@@ -43,15 +42,12 @@ def process_ventas(df: pd.DataFrame):
 def process_performance(df: pd.DataFrame):
     df = clean_columns(df)
 
-    # Renombrar columnas si vienen con BOM
-    if "ï% Firt" in df.columns:
-        df = df.rename(columns={"ï% Firt": "% Firt"})
+    # BOM fixes
     if "ï»¿% Firt" in df.columns:
         df = df.rename(columns={"ï»¿% Firt": "% Firt"})
 
     df["fecha"] = pd.to_datetime(df["Fecha de Referencia"], errors="coerce")
 
-    # Filtrar C_Ops Support
     df = df[df["Group Support Service"] == "C_Ops Support"]
 
     df["Q_Tickets"] = 1
@@ -82,11 +78,6 @@ def process_performance(df: pd.DataFrame):
 def process_auditorias(df: pd.DataFrame):
     df = clean_columns(df)
 
-    # Corrección columna fecha
-    if "Date Time" not in df.columns and "Date Time" in df.columns:
-        df = df.rename(columns={"Date Time": "Date Time"})
-    if "ïDate Time" in df.columns:
-        df = df.rename(columns={"ïDate Time": "Date Time"})
     if "ï»¿Date Time" in df.columns:
         df = df.rename(columns={"ï»¿Date Time": "Date Time"})
 
@@ -104,7 +95,7 @@ def process_auditorias(df: pd.DataFrame):
 
 
 # ---------------------------------------------------------------
-# PROCESAR RESERVAS OFF TIME
+# PROCESAR OFF-TIME
 # ---------------------------------------------------------------
 
 def process_offtime(df: pd.DataFrame):
@@ -122,7 +113,7 @@ def process_offtime(df: pd.DataFrame):
 
 
 # ---------------------------------------------------------------
-# PROCESAR DURACIONES >90 MIN
+# PROCESAR DURACIÓN > 90 MINUTOS
 # ---------------------------------------------------------------
 
 def process_duracion(df: pd.DataFrame):
@@ -133,14 +124,14 @@ def process_duracion(df: pd.DataFrame):
     df["Viajes_Mayor_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
 
     dur = df.groupby(df["fecha"].dt.date).agg(
-        Q_Viajes_>90=("Viajes_Mayor_90", "sum")
+        Q_Viajes_Mayor_90=("Viajes_Mayor_90", "sum")
     ).reset_index()
 
     return dur
 
 
 # ---------------------------------------------------------------
-# ARMAR REPORTE DIARIO + SEMANAL + MENSUAL
+# PROCESAR CONSOLIDADO GLOBAL
 # ---------------------------------------------------------------
 
 def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
@@ -151,14 +142,15 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     off = process_offtime(df_off)
     dur = process_duracion(df_dur)
 
-    # Merge completo por fecha
     df = ventas.merge(perf, on="fecha", how="outer")
     df = df.merge(aud, on="fecha", how="outer")
     df = df.merge(off, on="fecha", how="outer")
     df = df.merge(dur, on="fecha", how="outer")
 
-    # Reemplazar NaN según reglas
-    cantidades = ["Q_Encuestas","Q_Reopen","Q_Tickets","Q_Tickets_Resueltos","Q_Auditorias","Q_OFF_TIME","Q_Viajes_>90"]
+    cantidades = [
+        "Q_Encuestas","Q_Reopen","Q_Tickets","Q_Tickets_Resueltos",
+        "Q_Auditorias","Q_OFF_TIME","Q_Viajes_Mayor_90"
+    ]
     for c in cantidades:
         if c in df.columns:
             df[c] = df[c].fillna(0)
@@ -171,25 +163,22 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
         if c in df.columns:
             df[c] = df[c].replace({np.nan: None})
 
-    # Filtrar por rango
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
-
     df = df.sort_values("fecha").reset_index(drop=True)
 
-    # SEMANAL <24 - 30 Noviembre>
-    df["Semana"] = df["fecha"].apply(lambda x: pd.to_datetime(x))
-    df["Semana_num"] = df["Semana"].dt.isocalendar().week
+    # Semana humana: Ej. “24–30 Noviembre”
+    df["fecha_dt"] = pd.to_datetime(df["fecha"])
+    df["Semana"] = df["fecha_dt"].dt.isocalendar().week
 
-    semana_labels = []
-    for w in df["Semana_num"]:
-        dias = df[df["Semana_num"] == w]["fecha"]
-        semana_labels.append(f"{dias.min().day}–{dias.max().day} {dias.min():%B}")
+    semana_label = []
+    for w in df["Semana"]:
+        dias = df[df["Semana"] == w]["fecha_dt"]
+        semana_label.append(f"{dias.min().day}–{dias.max().day} {dias.min():%B}")
 
-    df["Semana_Label"] = semana_labels
+    df["Semana_Label"] = semana_label
 
     semanal = df.groupby("Semana_Label").sum(numeric_only=True).reset_index()
-
-    mensual = df.groupby(df["fecha"].map(lambda x: f"{x:%B %Y}")).sum(numeric_only=True).reset_index()
+    mensual = df.groupby(df["fecha_dt"].dt.to_period("M")).sum(numeric_only=True).reset_index()
 
     return df, semanal, mensual
 
