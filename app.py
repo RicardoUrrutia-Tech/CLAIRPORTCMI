@@ -1,25 +1,31 @@
 import streamlit as st
 import pandas as pd
 import csv
-from io import BytesIO
+from io import BytesIO, StringIO
 from processor import procesar_global
 
 st.set_page_config(page_title="CMI – Consolidado Diario", layout="wide")
 st.title("📊 Consolidado Diario – Aeropuerto")
 
 # ======================================================
-# FUNCIÓN UNIVERSAL PARA LEER CUALQUIER CSV
+# LECTOR UNIVERSAL CSV (BOM-PROOF + DETECTOR DE SEPARADOR)
 # ======================================================
 def read_any_csv(uploaded_file):
+    raw = uploaded_file.read()
+    uploaded_file.seek(0)
+
+    # Decodificación con limpieza BOM real
+    text = raw.decode("latin-1").replace("\ufeff", "").replace("ï»¿", "")
+
+    # Detectar separador correctamente
     try:
-        sample = uploaded_file.read().decode("latin-1")
-        uploaded_file.seek(0)
-        dialect = csv.Sniffer().sniff(sample.splitlines()[0])
+        first_line = text.splitlines()[0]
+        dialect = csv.Sniffer().sniff(first_line)
         sep = dialect.delimiter
     except:
         sep = ","  # fallback
 
-    return pd.read_csv(uploaded_file, sep=sep, encoding="latin-1", engine="python")
+    return pd.read_csv(StringIO(text), sep=sep, engine="python")
 
 
 # ======================================================
@@ -51,7 +57,6 @@ if st.button("Procesar Consolidado"):
 
     try:
         df_ventas = pd.read_excel(ventas_file)
-
         df_perf = read_any_csv(performance_file)
         df_aud = read_any_csv(auditorias_file)
         df_off = read_any_csv(offtime_file)
@@ -70,12 +75,8 @@ if st.button("Procesar Consolidado"):
         st.error(f"❌ Error al procesar datos: {e}")
         st.stop()
 
-    # ======================================================
-    # MOSTRAR RESULTADO
-    # ======================================================
     st.success("Procesado correctamente ✔")
     st.dataframe(df_final, height=450)
-
 
     # ======================================================
     # EXPORTAR A EXCEL (CON FORMATO CLP PARA VENTAS)
@@ -88,18 +89,17 @@ if st.button("Procesar Consolidado"):
         workbook = writer.book
         worksheet = writer.sheets["Consolidado"]
 
-        # Formato CLP
         formato_clp = workbook.add_format({
             "num_format": "$ #,##0",
             "align": "right"
         })
 
-        columnas_ventas = ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
+        cols_monetarias = ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
 
-        for col in columnas_ventas:
+        for col in cols_monetarias:
             if col in df.columns:
-                col_idx = df.columns.get_loc(col)
-                worksheet.set_column(col_idx, col_idx, 18, formato_clp)
+                idx = df.columns.get_loc(col)
+                worksheet.set_column(idx, idx, 18, formato_clp)
 
         writer.close()
         return output.getvalue()
@@ -112,4 +112,3 @@ if st.button("Procesar Consolidado"):
         file_name="Consolidado_Diario.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
