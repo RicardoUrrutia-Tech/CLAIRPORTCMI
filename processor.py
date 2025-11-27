@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime
 
 # ---------------------------------------------------------------
-# CONVERTIR FECHAS CON FORMATO FLEXIBLE
+# CONVERTIR FECHAS FLEXIBLES
 # ---------------------------------------------------------------
 def to_date(x):
     if pd.isna(x):
@@ -60,7 +60,6 @@ def process_ventas(df):
     df = normalize_headers(df.copy())
     df["fecha"] = df["date"].apply(to_date)
 
-    # Normalizar precios
     df["qt_price_local"] = (
         df["qt_price_local"].astype(str)
         .str.replace(",", "")
@@ -69,7 +68,6 @@ def process_ventas(df):
     )
     df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce").fillna(0)
 
-    # Indicadores
     df["Ventas_Totales"] = df["qt_price_local"]
     df["Ventas_Compartidas"] = df.apply(
         lambda x: x["qt_price_local"] if str(x["ds_product_name"]).lower() == "van_compartida" else 0,
@@ -97,11 +95,11 @@ def process_performance(df):
 
     df["fecha"] = df["Fecha de Referencia"].apply(to_date)
 
-    # Indicadores
     df["Q_Encuestas"] = df.apply(
         lambda x: 1 if ((not pd.isna(x.get("CSAT"))) or (not pd.isna(x.get("NPS Score")))) else 0,
         axis=1,
     )
+
     df["Q_Tickets"] = 1
     df["Q_Tickets_Resueltos"] = df["Status"].apply(
         lambda x: 1 if str(x).strip().lower() == "solved" else 0
@@ -164,26 +162,25 @@ def process_off_time(df):
 
     df = normalize_headers(df.copy())
 
-    # Fecha desde tm_airport_arrival_requested_local_at
     df["fecha"] = pd.to_datetime(
         df["tm_airport_arrival_requested_local_at"],
         errors="coerce"
     ).dt.date
 
-    # OFF TIME = todo lo que NO sea "A tiempo"
-    df["OffTime"] = df["Segment Arrived to Airport vs Requested"].apply(
+    df["Q_Reservas_Off_Time"] = df["Segment Arrived to Airport vs Requested"].apply(
         lambda x: 1 if str(x).strip() != "02. A tiempo (0-20 min antes)" else 0
     )
 
-    return df.groupby("fecha", as_index=False).agg({
-        "OffTime": "sum"
-    }).rename(columns={"OffTime": "Q_Reservas_Off_Time"})
+    return df.groupby("fecha", as_index=False)[
+        ["Q_Reservas_Off_Time"]
+    ].sum()
 
 
 # ===============================================================
-# CONSOLIDADO DIARIO FINAL
+# CONSOLIDADO FINAL
 # ===============================================================
 def build_daily_global(dfs):
+
     merged = None
     for df in dfs:
         if df is not None and not df.empty:
@@ -194,17 +191,11 @@ def build_daily_global(dfs):
 
     merged = merged.sort_values("fecha")
 
-    # Indicadores de cantidad → rellenar con 0
     Q_cols = [
-        "Q_Encuestas",
-        "Q_Tickets",
-        "Q_Tickets_Resueltos",
-        "Q_Reopen",
-        "Q_Auditorias",
+        "Q_Encuestas", "Q_Tickets", "Q_Tickets_Resueltos",
+        "Q_Reopen", "Q_Auditorias",
         "Q_Reservas_Off_Time",
-        "Ventas_Totales",
-        "Ventas_Compartidas",
-        "Ventas_Exclusivas",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
     ]
 
     for col in Q_cols:
