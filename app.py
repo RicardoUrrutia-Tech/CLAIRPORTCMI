@@ -1,21 +1,21 @@
-import streamlit as st
+iimport streamlit as st
 import pandas as pd
 from io import BytesIO
-from processor_global import procesar_global
+from processor import procesar_global
 
 # ------------------------------------------------------------
-# CONFIGURACIÓN DE LA APP
+# CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
-st.set_page_config(page_title="Reporte Consolidado - Diario General", layout="wide")
-st.title("🟦 Consolidador Diario General – Aeropuerto Cabify")
+st.set_page_config(page_title="Reporte Diario Consolidado", layout="wide")
+st.title("🟦 Reporte Diario Consolidado – Aeropuerto Cabify")
 
 st.markdown("""
-Esta aplicación consolida los reportes de **Ventas**, **Performance** y **Auditorías**  
-para entregar un **resumen diario general**, sin considerar agentes de forma individual.
+Esta aplicación consolida los reportes de **Ventas**, **Performance** y **Auditorías**
+para generar un **resumen diario general**, sin distinguir agentes.
 """)
 
 # ------------------------------------------------------------
-# SUBIDA DE ARCHIVOS
+# CARGA DE ARCHIVOS
 # ------------------------------------------------------------
 st.header("📤 Cargar Archivos")
 
@@ -23,52 +23,44 @@ col1, col2 = st.columns(2)
 
 with col1:
     ventas_file = st.file_uploader(
-        "Reporte de Ventas (Excel .xlsx)",
-        type=["xlsx"],
-        key="ventas"
+        "Reporte de Ventas (.xlsx)",
+        type=["xlsx"]
     )
 
 with col2:
     performance_file = st.file_uploader(
-        "Reporte de Performance (CSV)",
-        type=["csv"],
-        key="performance"
+        "Reporte de Performance (.csv)",
+        type=["csv"]
     )
 
 auditorias_file = st.file_uploader(
-    "Reporte de Auditorías (CSV - separador ;) ",
-    type=["csv"],
-    key="auditorias"
+    "Reporte de Auditorías (.csv con separador ;) ",
+    type=["csv"]
 )
 
 # ------------------------------------------------------------
-# BOTÓN PROCESAR
+# PROCESAR
 # ------------------------------------------------------------
 if st.button("🔄 Procesar Reportes"):
 
-    # Validación inicial
     if not ventas_file or not performance_file or not auditorias_file:
         st.error("❌ Debes cargar los 3 archivos para continuar.")
         st.stop()
 
-    # -----------------------------
-    # LECTURA VENTAS
-    # -----------------------------
+    # --- Ventas ---
     try:
         df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
     except Exception as e:
-        st.error(f"❌ Error al leer Ventas: {e}")
+        st.error(f"❌ Error al cargar Ventas: {e}")
         st.stop()
 
-    # -----------------------------
-    # LECTURA PERFORMANCE
-    # -----------------------------
+    # --- Performance ---
     try:
         df_performance = pd.read_csv(
             performance_file,
             sep=",",
             encoding="utf-8",
-            engine="python",
+            engine="python"
         )
     except Exception:
         try:
@@ -76,46 +68,37 @@ if st.button("🔄 Procesar Reportes"):
                 performance_file,
                 sep=",",
                 encoding="latin-1",
-                engine="python",
+                engine="python"
             )
         except Exception as e:
-            st.error(f"❌ Error al leer Performance: {e}")
+            st.error(f"❌ Error al cargar Performance: {e}")
             st.stop()
 
-    # -----------------------------
-    # LECTURA AUDITORÍAS (FORMATO EXACTO)
-    # -----------------------------
+    # --- Auditorías ---
     try:
         auditorias_file.seek(0)
         df_auditorias = pd.read_csv(
             auditorias_file,
             sep=";",
             encoding="utf-8-sig",
-            engine="python",
+            engine="python"
         )
     except Exception as e:
-        st.error(f"❌ Error al leer Auditorías: {e}")
-        st.stop()
-
-    if df_auditorias.shape[1] == 0:
-        st.error("❌ El archivo de Auditorías no tiene columnas válidas.")
+        st.error(f"❌ Error al cargar Auditorías: {e}")
         st.stop()
 
     # ------------------------------------------------------------
-    # PROCESAR DATOS
+    # PROCESAR LOS DATOS
     # ------------------------------------------------------------
     df_diario = procesar_global(df_ventas, df_performance, df_auditorias)
 
     st.success("✔ Reporte generado correctamente.")
 
-    # ------------------------------------------------------------
-    # MOSTRAR RESULTADOS
-    # ------------------------------------------------------------
     st.header("📅 Resumen Diario Consolidado")
     st.dataframe(df_diario, use_container_width=True)
 
     # ------------------------------------------------------------
-    # DESCARGA EN EXCEL
+    # DESCARGA EXCEL
     # ------------------------------------------------------------
     st.header("📥 Descargar Excel Consolidado")
 
@@ -136,4 +119,4 @@ if st.button("🔄 Procesar Reportes"):
     )
 
 else:
-    st.info("Sube los archivos y presiona **Procesar Reportes** para continuar.")
+    st.info("Sube todos los archivos y presiona **Procesar Reportes** para continuar.")
