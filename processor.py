@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 # ============================================================
-# 🔧 LIMPIEZA UNIVERSAL DE COLUMNAS (UTF, BOM, ÍCONOS ROTOS)
+# 🔧 LIMPIEZA DE COLUMNAS
 # ============================================================
 
 def clean_cols(df):
@@ -11,13 +11,13 @@ def clean_cols(df):
 
 
 # ============================================================
-# 🟦 PROCESO VENTAS
+# 🟦 PROCESAR VENTAS
 # ============================================================
+
 def process_ventas(df):
     df = clean_cols(df)
 
-    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce")
-    df["fecha"] = df["fecha"].dt.normalize()   # 🔥 FIX
+    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["qt_price_local"] = (
         df["qt_price_local"]
@@ -41,15 +41,15 @@ def process_ventas(df):
 
 
 # ============================================================
-# 🟩 PROCESO PERFORMANCE
+# 🟩 PROCESAR PERFORMANCE
 # ============================================================
+
 def process_performance(df):
     df = clean_cols(df)
 
     df = df.rename(columns={"% Firt": "firt_pct", "% Furt": "furt_pct"})
 
-    df["fecha"] = pd.to_datetime(df["Fecha de Referencia"], errors="coerce")
-    df["fecha"] = df["fecha"].dt.normalize()   # 🔥 FIX
+    df["fecha"] = pd.to_datetime(df["Fecha de Referencia"], errors="coerce").dt.normalize()
 
     df["Q_Ticket"] = 1
     df["Q_Tickets_Resueltos"] = np.where(df["Status"].str.lower() == "solved", 1, 0)
@@ -73,13 +73,13 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESO AUDITORÍAS
+# 🟪 PROCESAR AUDITORÍAS
 # ============================================================
+
 def process_auditorias(df):
     df = clean_cols(df)
 
-    df["fecha"] = pd.to_datetime(df["Date Time"], format="%d-%m-%Y", errors="coerce")
-    df["fecha"] = df["fecha"].dt.normalize()   # 🔥 FIX
+    df["fecha"] = pd.to_datetime(df["Date Time"], format="%d-%m-%Y", errors="coerce").dt.normalize()
 
     df["Q_Auditorias"] = 1
     df["Nota_Auditorias"] = df["Total Audit Score"]
@@ -93,13 +93,13 @@ def process_auditorias(df):
 
 
 # ============================================================
-# 🟧 PROCESO OFF-TIME
+# 🟧 PROCESAR OFF-TIME
 # ============================================================
+
 def process_offtime(df):
     df = clean_cols(df)
 
-    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce")
-    df["fecha"] = df["fecha"].dt.normalize()   # 🔥 FIX
+    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["OFF_TIME"] = np.where(
         df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)",
@@ -115,13 +115,13 @@ def process_offtime(df):
 
 
 # ============================================================
-# 🟥 PROCESO DURACIÓN >90
+# 🟥 PROCESAR DURACIÓN > 90 MINUTOS
 # ============================================================
+
 def process_duracion(df):
     df = clean_cols(df)
 
-    df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce")
-    df["fecha"] = df["fecha"].dt.normalize()   # 🔥 FIX
+    df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
 
     df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
 
@@ -133,8 +133,9 @@ def process_duracion(df):
 
 
 # ============================================================
-# 📅 FORMATEO SEMANAS HUMANAS
+# 📅 FORMATO DE SEMANA HUMANA
 # ============================================================
+
 def semana_humana(fecha):
     lunes = fecha - pd.Timedelta(days=fecha.weekday())
     domingo = lunes + pd.Timedelta(days=6)
@@ -148,8 +149,9 @@ def semana_humana(fecha):
 
 
 # ============================================================
-# 🟦 PROCESO GLOBAL – MERGE FINAL
+# 🔵 PROCESAR GLOBAL – DIARIO + SEMANAL + PERIODO
 # ============================================================
+
 def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
 
     v = process_ventas(df_ventas)
@@ -168,29 +170,42 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    q_cols = ["Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
-              "Q_Auditorias", "OFF_TIME", "Duracion_90",
-              "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
+    q_cols = [
+        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Auditorias", "OFF_TIME", "Duracion_90",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
+    ]
 
     for c in q_cols:
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    avg_cols = ["CSAT", "NPS Score", "Firt (h)", "Furt (h)",
-                "firt_pct", "furt_pct", "Nota_Auditorias"]
+    avg_cols = [
+        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
+        "firt_pct", "furt_pct", "Nota_Auditorias"
+    ]
 
     for c in avg_cols:
         if c in df.columns:
             df[c] = df[c].replace({0: np.nan}).fillna("–")
 
+    # ============================================================
+    # 📅 RESUMEN SEMANAL (solo numéricos)
+    # ============================================================
     df_sem = df.copy()
     df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
-    df_sem = df_sem.groupby("Semana", as_index=False).sum()
 
-    df_per = df_sem.copy()
+    numeric_cols = df_sem.select_dtypes(include=["number"]).columns.tolist()
+
+    df_sem = df_sem.groupby("Semana")[numeric_cols].sum().reset_index()
+
+    # ============================================================
+    # 📅 RESUMEN DEL PERIODO (solo numéricos)
+    # ============================================================
+    df_per = df.copy()
     df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
-    df_per = df_per.groupby("Periodo", as_index=False).sum()
+
+    df_per = df_per.groupby("Periodo")[numeric_cols].sum().reset_index()
 
     return df, df_sem, df_per
-
 
