@@ -1,6 +1,25 @@
-iimport streamlit as st
+import streamlit as st
 import pandas as pd
 from io import BytesIO
+import os
+import sys
+
+# ------------------------------------------------------------
+# FIX DEFINITIVO PARA ModuleNotFoundError
+# ------------------------------------------------------------
+
+# Ruta donde está ESTE MISMO archivo app.py
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Asegurar que esa ruta está en la búsqueda de módulos de Python
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
+# Debug opcional (puedes quitarlo después)
+st.write("📂 Working Directory:", CURRENT_DIR)
+st.write("🔍 sys.path:", sys.path)
+
+# Ahora sí podemos importar con seguridad
 from processor import procesar_global
 
 # ------------------------------------------------------------
