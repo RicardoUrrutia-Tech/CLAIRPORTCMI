@@ -107,5 +107,9 @@ if st.button("Procesar Consolidado"):
     excel_bytes = to_excel(df_final)
 
     st.download_button(
-
+        "⬇ Descargar Excel Consolidado",
+        data=excel_bytes,
+        file_name="Consolidado_Diario.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
