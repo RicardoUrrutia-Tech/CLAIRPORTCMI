@@ -21,14 +21,14 @@ if CURRENT_DIR not in sys.path:
 from processor import procesar_global
 
 # ==========================================================
-# CONFIG DE LA APP
+# CONFIG
 # ==========================================================
 st.set_page_config(page_title="Reporte Diario Consolidado", layout="wide")
 st.title("🟦 Reporte Diario Consolidado – Aeropuerto Cabify")
 
 st.markdown("""
 Esta aplicación consolida los reportes de **Ventas**, **Performance**, **Auditorías**
-y **Reservas OFF TIME**, para producir un **informe diario completo**.
+y **Reservas OFF TIME**, obteniendo un **informe diario completo**.
 """)
 
 # ==========================================================
@@ -38,8 +38,8 @@ st.header("📤 Cargar Archivos")
 
 ventas_file = st.file_uploader("Reporte de Ventas (.xlsx)", type=["xlsx"])
 performance_file = st.file_uploader("Reporte de Performance (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("Reporte de Auditorías (.csv separador ;) ", type=["csv"])
-offtime_file = st.file_uploader("Reporte Reservas Off Time (.csv)", type=["csv"])
+auditorias_file = st.file_uploader("Reporte de Auditorías (.csv ;)", type=["csv"])
+offtime_file = st.file_uploader("Reporte Reservas OFF TIME (.csv)", type=["csv"])
 
 # ==========================================================
 # PROCESAR
@@ -50,57 +50,54 @@ if st.button("🔄 Procesar Reportes"):
         st.error("❌ Debes cargar los 4 archivos para continuar.")
         st.stop()
 
-    # VENTAS
+    # Ventas
     try:
         df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
     except Exception as e:
-        st.error(f"❌ Error Ventas: {e}")
+        st.error(f"❌ Error en Ventas: {e}")
         st.stop()
 
-    # PERFORMANCE
+    # Performance
     try:
         df_performance = pd.read_csv(performance_file, sep=",", encoding="utf-8")
-    except Exception:
+    except:
         try:
             df_performance = pd.read_csv(performance_file, sep=",", encoding="latin-1")
         except Exception as e:
-            st.error(f"❌ Error Performance: {e}")
+            st.error(f"❌ Error en Performance: {e}")
             st.stop()
 
-    # AUDITORÍAS
+    # Auditorías
     try:
         auditorias_file.seek(0)
         df_auditorias = pd.read_csv(auditorias_file, sep=";", encoding="utf-8-sig")
     except Exception as e:
-        st.error(f"❌ Error Auditorías: {e}")
+        st.error(f"❌ Error en Auditorías: {e}")
         st.stop()
 
     # OFF TIME
     try:
         df_offtime = pd.read_csv(offtime_file, sep=",", encoding="utf-8-sig")
     except Exception as e:
-        st.error(f"❌ Error Off Time: {e}")
+        st.error(f"❌ Error en OFF TIME: {e}")
         st.stop()
 
-    # =====================================================
-    # PROCESAMIENTO PRINCIPAL
-    # =====================================================
+    # ==========================================================
+    # PROCESAMIENTO GENERAL
+    # ==========================================================
     df_diario = procesar_global(
-        df_ventas,
-        df_performance,
-        df_auditorias,
-        df_offtime
+        df_ventas, df_performance, df_auditorias, df_offtime
     )
 
     st.success("✔ Reporte generado correctamente.")
-
     st.header("📅 Resumen Diario Consolidado")
+
     st.dataframe(df_diario, use_container_width=True)
 
-    # =====================================================
-    # DESCARGA EXCEL
-    # =====================================================
-    st.header("📥 Descargar Excel Consolidado")
+    # ==========================================================
+    # DESCARGA
+    # ==========================================================
+    st.header("📥 Descargar Consolidado")
 
     def to_excel(df):
         output = BytesIO()
@@ -110,12 +107,11 @@ if st.button("🔄 Procesar Reportes"):
         return output.getvalue()
 
     st.download_button(
-        label="⬇ Descargar Reporte Diario Consolidado",
+        label="⬇ Descargar Excel Consolidado",
         data=to_excel(df_diario),
         file_name="Consolidado_Diario_Aeropuerto.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 else:
-    st.info("Sube los archivos y presiona **Procesar Reportes**.")
-
+    st.info("Sube los 4 archivos y presiona **Procesar Reportes**.")
