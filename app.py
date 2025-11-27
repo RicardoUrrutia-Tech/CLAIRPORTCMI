@@ -1,160 +1,153 @@
 import streamlit as st
 import pandas as pd
-from processor import procesar_global
 from io import BytesIO
+from processor import procesar_reportes
 
-# ----------------------------------------------------
-# CONFIG
-# ----------------------------------------------------
-st.set_page_config(page_title="CMI Diario Consolidado", layout="wide")
-st.title("🟣 Consolidado Diario – Aeropuerto CL")
+# ------------------------------------------------------------
+# CONFIGURACIÓN DE LA APP
+# ------------------------------------------------------------
+st.set_page_config(page_title="Consolidador de Reportes - Aeropuerto", layout="wide")
+st.title("🟦 Consolidador de Reportes – Aeropuerto Cabify")
 
-st.write("Carga los reportes y selecciona un rango de fechas para generar el informe consolidado.")
+st.markdown("""
+Esta aplicación consolida los reportes de **Ventas**, **Performance** y **Auditorías**, 
+generando matrices diarias, semanales y un resumen total por agente.
+""")
 
-# ----------------------------------------------------
-# LOAD FILES
-# ----------------------------------------------------
-ventas_file = st.file_uploader("📄 Cargar Reporte de Ventas (.xlsx)", type=["xlsx"])
-perf_file = st.file_uploader("📄 Cargar Reporte de Performance (.csv)", type=["csv"])
-aud_file = st.file_uploader("📄 Cargar Reporte de Auditorías (.csv)", type=["csv"])
-off_file = st.file_uploader("📄 Cargar Reporte de OffTime (.csv)", type=["csv"])
-dur_file = st.file_uploader("📄 Cargar Reporte de Duración >90 (.csv)", type=["csv"])
+# ------------------------------------------------------------
+# SUBIDA DE ARCHIVOS
+# ------------------------------------------------------------
+st.header("📤 Cargar Archivos")
 
-if not all([ventas_file, perf_file, aud_file, off_file, dur_file]):
-    st.warning("⚠️ Debes cargar **todos los archivos** para continuar.")
-    st.stop()
+col1, col2 = st.columns(2)
 
-# ----------------------------------------------------
-# SAFE COLUMN CLEANER
-# ----------------------------------------------------
-def clean_columns(df):
-    df.columns = (
-        df.columns
-        .str.replace("\ufeff", "", regex=False)   # UTF-8 BOM
-        .str.replace("\u200b", "", regex=False)  # Zero width space
-        .str.replace("\xa0", " ", regex=False)   # No-break space
-        .str.strip()
+with col1:
+    ventas_file = st.file_uploader(
+        "Reporte de Ventas (Excel .xlsx)", 
+        type=["xlsx"], 
+        key="ventas"
     )
-    return df
 
-# ----------------------------------------------------
-# READ FILES (ROBUST)
-# ----------------------------------------------------
-try:
-    # VENTAS
-    df_ventas = pd.read_excel(ventas_file)
-    df_ventas = clean_columns(df_ventas)
-
-    # PERFORMANCE
-    df_performance = pd.read_csv(
-        perf_file,
-        sep=",",
-        encoding="latin-1",
-        engine="python"
+with col2:
+    performance_file = st.file_uploader(
+        "Reporte de Performance (CSV)", 
+        type=["csv"], 
+        key="perf"
     )
-    df_performance = clean_columns(df_performance)
 
-    # 🔥 FIX DEFINITIVO PARA "% Firt" CON BOM MAL CODIFICADO
-    if "ï»¿% Firt" in df_performance.columns:
-        df_performance.rename(columns={"ï»¿% Firt": "% Firt"}, inplace=True)
+auditorias_file = st.file_uploader(
+    "Reporte de Auditorías (CSV - separador ;)  ", 
+    type=["csv"], 
+    key="aud"
+)
 
-    # 🔍 Debug para verificar que ya se corrigió
-    st.write("🔍 COLUMNAS PERFORMANCE (post-fix):", df_performance.columns.tolist())
+# ------------------------------------------------------------
+# BOTÓN PROCESAR
+# ------------------------------------------------------------
+if st.button("🔄 Procesar Reportes"):
 
-    # AUDITORÍAS (autodetectar separador)
-    df_auditorias = pd.read_csv(
-        aud_file,
-        sep=None,
-        encoding="latin-1",
-        engine="python"
-    )
-    df_auditorias = clean_columns(df_auditorias)
-
-    # OFFTIME
-    df_offtime = pd.read_csv(
-        off_file,
-        sep=",",
-        encoding="latin-1",
-        engine="python"
-    )
-    df_offtime = clean_columns(df_offtime)
-
-    # DURACIÓN >90
-    df_duracion = pd.read_csv(
-        dur_file,
-        sep=",",
-        encoding="latin-1",
-        engine="python"
-    )
-    df_duracion = clean_columns(df_duracion)
-
-except Exception as e:
-    st.error(f"❌ Error leyendo archivos: {e}")
-    st.stop()
-
-# ----------------------------------------------------
-# DATE RANGE
-# ----------------------------------------------------
-st.subheader("📅 Seleccione rango de fechas")
-
-c1, c2 = st.columns(2)
-date_from = c1.date_input("Desde")
-date_to = c2.date_input("Hasta")
-
-if date_from > date_to:
-    st.error("❌ La fecha inicial no puede ser mayor a la fecha final.")
-    st.stop()
-
-# ----------------------------------------------------
-# PROCESS
-# ----------------------------------------------------
-if st.button("▶️ Generar Consolidado"):
-    try:
-        df_diario, df_semanal, df_total = procesar_global(
-            df_ventas,
-            df_performance,
-            df_auditorias,
-            df_offtime,
-            df_duracion,
-            date_from,
-            date_to
-        )
-    except Exception as e:
-        st.error(f"❌ Error al procesar datos: {e}")
+    # Validación inicial
+    if not ventas_file or not performance_file or not auditorias_file:
+        st.error("❌ Debes cargar los 3 archivos para continuar.")
         st.stop()
 
-    # -------------------------------
-    # SHOW RESULTS
-    # -------------------------------
-    st.subheader("📘 Resultado Diario")
+    # ------------------------------------------------------------
+    # LECTURA DE VENTAS
+    # ------------------------------------------------------------
+    try:
+        df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
+    except Exception as e:
+        st.error(f"❌ Error al leer Ventas: {e}")
+        st.stop()
+
+    # ------------------------------------------------------------
+    # LECTURA DE PERFORMANCE (CSV)
+    # ------------------------------------------------------------
+    try:
+        df_performance = pd.read_csv(
+            performance_file,
+            sep=",",
+            engine="python",
+            encoding="utf-8"
+        )
+    except Exception:
+        try:
+            df_performance = pd.read_csv(
+                performance_file,
+                sep=",",
+                engine="python",
+                encoding="latin-1"
+            )
+        except Exception as e:
+            st.error(f"❌ Error al leer Performance: {e}")
+            st.stop()
+
+    # ------------------------------------------------------------
+    # LECTURA DE AUDITORÍAS — FORMATO EXACTO DETECTADO
+    # ------------------------------------------------------------
+    try:
+        auditorias_file.seek(0)  # Importante: resetear puntero
+        df_auditorias = pd.read_csv(
+            auditorias_file,
+            sep=";",
+            encoding="utf-8-sig",
+            engine="python"
+        )
+    except Exception as e:
+        st.error(f"❌ Error al leer Auditorías: {e}")
+        st.stop()
+
+    if df_auditorias.shape[1] == 0:
+        st.error("❌ El archivo Auditorías no tiene columnas válidas.")
+        st.stop()
+
+    # ------------------------------------------------------------
+    # PROCESAR REPORTES
+    # ------------------------------------------------------------
+    resultados = procesar_reportes(df_ventas, df_performance, df_auditorias)
+
+    df_diario = resultados["diario"]
+    df_semanal = resultados["semanal"]
+    df_resumen = resultados["resumen"]
+
+    # ------------------------------------------------------------
+    # MOSTRAR RESULTADOS
+    # ------------------------------------------------------------
+    st.success("✔ Reportes procesados correctamente.")
+
+    st.header("📅 Reporte Diario")
     st.dataframe(df_diario, use_container_width=True)
 
-    st.subheader("📗 Resumen Semanal")
+    st.header("📆 Reporte Semanal")
     st.dataframe(df_semanal, use_container_width=True)
 
-    st.subheader("📙 Resumen Total del Periodo")
-    st.dataframe(df_total, use_container_width=True)
+    st.header("📊 Resumen Total por Agente")
+    st.dataframe(df_resumen, use_container_width=True)
 
-    # -------------------------------
-    # EXPORT TO EXCEL
-    # -------------------------------
-    def to_excel(df1, df2, df3):
+    # ------------------------------------------------------------
+    # DESCARGA DE ARCHIVO FINAL
+    # ------------------------------------------------------------
+    st.header("📥 Descargar Resultados")
+
+    def to_excel_multiple(diario, semanal, resumen):
         output = BytesIO()
         writer = pd.ExcelWriter(output, engine="xlsxwriter")
 
-        df1.to_excel(writer, index=False, sheet_name="Diario")
-        df2.to_excel(writer, index=False, sheet_name="Semanal")
-        df3.to_excel(writer, index=False, sheet_name="Total")
+        diario.to_excel(writer, sheet_name="Diario", index=False)
+        semanal.to_excel(writer, sheet_name="Semanal", index=False)
+        resumen.to_excel(writer, sheet_name="Resumen", index=False)
 
         writer.close()
         return output.getvalue()
 
-    excel_bytes = to_excel(df_diario, df_semanal, df_total)
+    excel_bytes = to_excel_multiple(df_diario, df_semanal, df_resumen)
 
     st.download_button(
-        label="📥 Descargar Consolidado (Excel)",
+        label="⬇ Descargar Excel Consolidado",
         data=excel_bytes,
-        file_name="Consolidado_CMI.xlsx",
+        file_name="Reporte_Consolidado_Aeropuerto.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+else:
+    st.info("Sube los archivos y presiona **Procesar Reportes** para continuar.")
