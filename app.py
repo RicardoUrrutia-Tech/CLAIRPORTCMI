@@ -1,17 +1,17 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from processor import procesar_reportes
+from processor_global import procesar_global
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN DE LA APP
 # ------------------------------------------------------------
-st.set_page_config(page_title="Consolidador de Reportes - Aeropuerto", layout="wide")
-st.title("🟦 Consolidador de Reportes – Aeropuerto Cabify")
+st.set_page_config(page_title="Reporte Consolidado - Diario General", layout="wide")
+st.title("🟦 Consolidador Diario General – Aeropuerto Cabify")
 
 st.markdown("""
-Esta aplicación consolida los reportes de **Ventas**, **Performance** y **Auditorías**, 
-generando matrices diarias, semanales y un resumen total por agente.
+Esta aplicación consolida los reportes de **Ventas**, **Performance** y **Auditorías**  
+para entregar un **resumen diario general**, sin considerar agentes de forma individual.
 """)
 
 # ------------------------------------------------------------
@@ -23,22 +23,22 @@ col1, col2 = st.columns(2)
 
 with col1:
     ventas_file = st.file_uploader(
-        "Reporte de Ventas (Excel .xlsx)", 
-        type=["xlsx"], 
+        "Reporte de Ventas (Excel .xlsx)",
+        type=["xlsx"],
         key="ventas"
     )
 
 with col2:
     performance_file = st.file_uploader(
-        "Reporte de Performance (CSV)", 
-        type=["csv"], 
-        key="perf"
+        "Reporte de Performance (CSV)",
+        type=["csv"],
+        key="performance"
     )
 
 auditorias_file = st.file_uploader(
-    "Reporte de Auditorías (CSV - separador ;)  ", 
-    type=["csv"], 
-    key="aud"
+    "Reporte de Auditorías (CSV - separador ;) ",
+    type=["csv"],
+    key="auditorias"
 )
 
 # ------------------------------------------------------------
@@ -51,103 +51,90 @@ if st.button("🔄 Procesar Reportes"):
         st.error("❌ Debes cargar los 3 archivos para continuar.")
         st.stop()
 
-    # ------------------------------------------------------------
-    # LECTURA DE VENTAS
-    # ------------------------------------------------------------
+    # -----------------------------
+    # LECTURA VENTAS
+    # -----------------------------
     try:
         df_ventas = pd.read_excel(ventas_file, engine="openpyxl")
     except Exception as e:
         st.error(f"❌ Error al leer Ventas: {e}")
         st.stop()
 
-    # ------------------------------------------------------------
-    # LECTURA DE PERFORMANCE (CSV)
-    # ------------------------------------------------------------
+    # -----------------------------
+    # LECTURA PERFORMANCE
+    # -----------------------------
     try:
         df_performance = pd.read_csv(
             performance_file,
             sep=",",
+            encoding="utf-8",
             engine="python",
-            encoding="utf-8"
         )
     except Exception:
         try:
             df_performance = pd.read_csv(
                 performance_file,
                 sep=",",
+                encoding="latin-1",
                 engine="python",
-                encoding="latin-1"
             )
         except Exception as e:
             st.error(f"❌ Error al leer Performance: {e}")
             st.stop()
 
-    # ------------------------------------------------------------
-    # LECTURA DE AUDITORÍAS — FORMATO EXACTO DETECTADO
-    # ------------------------------------------------------------
+    # -----------------------------
+    # LECTURA AUDITORÍAS (FORMATO EXACTO)
+    # -----------------------------
     try:
-        auditorias_file.seek(0)  # Importante: resetear puntero
+        auditorias_file.seek(0)
         df_auditorias = pd.read_csv(
             auditorias_file,
             sep=";",
             encoding="utf-8-sig",
-            engine="python"
+            engine="python",
         )
     except Exception as e:
         st.error(f"❌ Error al leer Auditorías: {e}")
         st.stop()
 
     if df_auditorias.shape[1] == 0:
-        st.error("❌ El archivo Auditorías no tiene columnas válidas.")
+        st.error("❌ El archivo de Auditorías no tiene columnas válidas.")
         st.stop()
 
     # ------------------------------------------------------------
-    # PROCESAR REPORTES
+    # PROCESAR DATOS
     # ------------------------------------------------------------
-    resultados = procesar_reportes(df_ventas, df_performance, df_auditorias)
+    df_diario = procesar_global(df_ventas, df_performance, df_auditorias)
 
-    df_diario = resultados["diario"]
-    df_semanal = resultados["semanal"]
-    df_resumen = resultados["resumen"]
+    st.success("✔ Reporte generado correctamente.")
 
     # ------------------------------------------------------------
     # MOSTRAR RESULTADOS
     # ------------------------------------------------------------
-    st.success("✔ Reportes procesados correctamente.")
-
-    st.header("📅 Reporte Diario")
+    st.header("📅 Resumen Diario Consolidado")
     st.dataframe(df_diario, use_container_width=True)
 
-    st.header("📆 Reporte Semanal")
-    st.dataframe(df_semanal, use_container_width=True)
-
-    st.header("📊 Resumen Total por Agente")
-    st.dataframe(df_resumen, use_container_width=True)
-
     # ------------------------------------------------------------
-    # DESCARGA DE ARCHIVO FINAL
+    # DESCARGA EN EXCEL
     # ------------------------------------------------------------
-    st.header("📥 Descargar Resultados")
+    st.header("📥 Descargar Excel Consolidado")
 
-    def to_excel_multiple(diario, semanal, resumen):
+    def to_excel(df):
         output = BytesIO()
         writer = pd.ExcelWriter(output, engine="xlsxwriter")
-
-        diario.to_excel(writer, sheet_name="Diario", index=False)
-        semanal.to_excel(writer, sheet_name="Semanal", index=False)
-        resumen.to_excel(writer, sheet_name="Resumen", index=False)
-
+        df.to_excel(writer, index=False, sheet_name="Diario Consolidado")
         writer.close()
         return output.getvalue()
 
-    excel_bytes = to_excel_multiple(df_diario, df_semanal, df_resumen)
+    excel_bytes = to_excel(df_diario)
 
     st.download_button(
-        label="⬇ Descargar Excel Consolidado",
+        label="⬇ Descargar Reporte Diario Consolidado",
         data=excel_bytes,
-        file_name="Reporte_Consolidado_Aeropuerto.xlsx",
+        file_name="Reporte_Diario_Consolidado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 else:
     st.info("Sube los archivos y presiona **Procesar Reportes** para continuar.")
+
