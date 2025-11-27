@@ -1,119 +1,134 @@
 import streamlit as st
 import pandas as pd
+from processor import procesar_global
 from io import BytesIO
-from processor import procesar_global, resumen_periodo, resumen_semanal
 
-st.set_page_config(page_title="CMI Global Airport", layout="wide")
-st.title("🟦 Consolidado Diario / Semanal / Periodo – Aeropuerto")
+st.set_page_config(page_title="CMI Diario Consolidado", layout="wide")
+st.title("🟣 Consolidado Diario – Aeropuerto CL")
 
-st.markdown("Carga los 5 archivos requeridos para generar los reportes consolidados.")
+st.write("Carga los 5 reportes y selecciona un rango de fechas para consolidar resultados.")
 
-# ===========================================================
+# ======================================================
 # CARGA DE ARCHIVOS
-# ===========================================================
-ventas_file = st.file_uploader("📤 Reporte VENTAS (.xlsx)", type=["xlsx"])
-perf_file = st.file_uploader("📤 Reporte PERFORMANCE (.csv)", type=["csv"])
-aud_file = st.file_uploader("📤 Reporte AUDITORÍAS (.csv)", type=["csv"])
-off_file = st.file_uploader("📤 Reporte OFF-TIME (.csv)", type=["csv"])
-dur_file = st.file_uploader("📤 Reporte DURACIÓN+90 (.csv)", type=["csv"])
+# ======================================================
+ventas_file = st.file_uploader("📄 Cargar Reporte de Ventas (.xlsx)", type=["xlsx"])
+perf_file = st.file_uploader("📄 Cargar Reporte de Performance (.csv)", type=["csv"])
+aud_file = st.file_uploader("📄 Cargar Reporte de Auditorías (.csv)", type=["csv"])
+off_file = st.file_uploader("📄 Cargar Reporte de OffTime (.csv)", type=["csv"])
+dur_file = st.file_uploader("📄 Cargar Reporte de Duración >90 (.csv)", type=["csv"])
 
-st.divider()
+if not all([ventas_file, perf_file, aud_file, off_file, dur_file]):
+    st.warning("⚠️ Debes cargar **todos los archivos** para continuar.")
+    st.stop()
 
-# ===========================================================
-# FILTROS DE FECHAS
-# ===========================================================
-st.subheader("📅 Filtro de Fechas")
-col1, col2 = st.columns(2)
+# ======================================================
+# LECTURA DE ARCHIVOS (ROBUSTA)
+# ======================================================
+try:
+    # VENTAS → SIEMPRE EXCEL
+    df_ventas = pd.read_excel(ventas_file)
 
-date_from = col1.date_input("Fecha inicial", None)
-date_to = col2.date_input("Fecha final", None)
+    # PERFORMANCE → CSV SEPARADO POR COMAS
+    df_performance = pd.read_csv(
+        perf_file,
+        sep=",",
+        engine="python",
+        encoding="latin-1"
+    )
 
-st.divider()
+    # AUDITORÍAS → CSV PERO SEPARADOR DESCONOCIDO → AUTO-DETECTAR
+    df_auditorias = pd.read_csv(
+        aud_file,
+        sep=None,           # detecta automáticamente coma, punto y coma o tab
+        engine="python",
+        encoding="latin-1"
+    )
 
-# ===========================================================
-# PROCESAR DATOS
-# ===========================================================
-if ventas_file and perf_file and aud_file and off_file and dur_file:
+    # OFFTIME → CSV CON COMAS
+    df_offtime = pd.read_csv(
+        off_file,
+        sep=",",
+        engine="python",
+        encoding="latin-1"
+    )
 
+    # DURACIÓN >90 → CSV CON COMAS
+    df_duracion = pd.read_csv(
+        dur_file,
+        sep=",",
+        engine="python",
+        encoding="latin-1"
+    )
+
+except Exception as e:
+    st.error(f"❌ Error leyendo archivos: {e}")
+    st.stop()
+
+# ======================================================
+# FILTRO DE FECHAS
+# ======================================================
+st.subheader("📅 Seleccione rango de fechas")
+
+c1, c2 = st.columns(2)
+date_from = c1.date_input("Desde")
+date_to = c2.date_input("Hasta")
+
+if date_from > date_to:
+    st.error("❌ La fecha inicial no puede ser mayor a la fecha final.")
+    st.stop()
+
+# ======================================================
+# PROCESAR
+# ======================================================
+if st.button("▶️ Generar Consolidado"):
     try:
-        df_ventas = pd.read_excel(ventas_file)
-        df_perf = pd.read_csv(perf_file, sep=",", engine="python", encoding="latin-1")
-        df_aud = pd.read_csv(aud_file, sep=",", engine="python", encoding="latin-1")
-        df_off = pd.read_csv(off_file, sep=",", engine="python", encoding="latin-1")
-        df_dur = pd.read_csv(dur_file, sep=",", engine="python", encoding="latin-1")
-
-    except Exception as e:
-        st.error(f"❌ Error leyendo archivos: {e}")
-        st.stop()
-
-    # =======================================================
-    # PROCESAMIENTO GLOBAL
-    # =======================================================
-    try:
-        df_final = procesar_global(
-            df_ventas, df_perf, df_aud, df_off, df_dur,
-            date_from, date_to
+        df_diario, df_semanal, df_total = procesar_global(
+            df_ventas,
+            df_performance,
+            df_auditorias,
+            df_offtime,
+            df_duracion,
+            date_from,
+            date_to
         )
+
     except Exception as e:
         st.error(f"❌ Error al procesar datos: {e}")
         st.stop()
 
-    st.success("✔ Datos procesados correctamente")
-    st.divider()
+    # ======================================================
+    # MOSTRAR RESULTADOS
+    # ======================================================
+    st.subheader("📘 Resultado Diario")
+    st.dataframe(df_diario, use_container_width=True)
 
-    # =======================================================
-    # DESCARGA A EXCEL
-    # =======================================================
-    def crear_excel(df):
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Reporte")
-        buffer.seek(0)
-        return buffer
+    st.subheader("📗 Resumen Semanal")
+    st.dataframe(df_semanal, use_container_width=True)
 
-    # ----------------------------------------
-    st.header("📄 Reporte Diario Consolidado")
-    st.dataframe(df_final, width="stretch")
+    st.subheader("📙 Resumen Total del Periodo")
+    st.dataframe(df_total, use_container_width=True)
 
-    st.download_button(
-        "📥 Descargar Excel Diario",
-        crear_excel(df_final),
-        "CMI_Diario.xlsx"
-    )
+    # ======================================================
+    # DESCARGAR EXCEL COMPLETO
+    # ======================================================
+    def export_excel(df1, df2, df3):
+        output = BytesIO()
+        writer = pd.ExcelWriter(output, engine="xlsxwriter")
 
-    st.divider()
+        df1.to_excel(writer, index=False, sheet_name="Diario")
+        df2.to_excel(writer, index=False, sheet_name="Semanal")
+        df3.to_excel(writer, index=False, sheet_name="Total")
 
-    # =======================================================
-    # RESUMEN PERIODO
-    # =======================================================
-    st.header("📊 Resumen General del Periodo")
+        writer.close()
+        return output.getvalue()
 
-    df_resumen = resumen_periodo(df_final)
-    st.dataframe(df_resumen, width="stretch")
+    excel_bytes = export_excel(df_diario, df_semanal, df_total)
 
     st.download_button(
-        "📥 Descargar Resumen Periodo",
-        crear_excel(df_resumen),
-        "CMI_Resumen_Periodo.xlsx"
+        label="📥 Descargar Consolidado en Excel",
+        data=excel_bytes,
+        file_name="Consolidado_CMI.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.divider()
-
-    # =======================================================
-    # RESUMEN SEMANAL
-    # =======================================================
-    st.header("📆 Resumen Semanal (Formato Humano)")
-
-    df_semanal = resumen_semanal(df_final)
-    st.dataframe(df_semanal, width="stretch")
-
-    st.download_button(
-        "📥 Descargar Resumen Semanal",
-        crear_excel(df_semanal),
-        "CMI_Resumen_Semanal.xlsx"
-    )
-
-
-else:
-    st.info("⚠️ Debes cargar los 5 archivos para continuar.")
 
