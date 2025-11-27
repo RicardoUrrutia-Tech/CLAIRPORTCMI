@@ -28,12 +28,11 @@ if not all([ventas_file, perf_file, aud_file, off_file, dur_file]):
 # SAFE COLUMN CLEANER
 # ----------------------------------------------------
 def clean_columns(df):
-    # Limpia BOM y espacios invisibles
     df.columns = (
         df.columns
-        .str.replace("\ufeff", "", regex=False)
-        .str.replace("\u200b", "", regex=False)
-        .str.replace("\xa0", " ", regex=False)
+        .str.replace("\ufeff", "", regex=False)   # UTF-8 BOM
+        .str.replace("\u200b", "", regex=False)  # Zero width space
+        .str.replace("\xa0", " ", regex=False)   # No-break space
         .str.strip()
     )
     return df
@@ -55,8 +54,12 @@ try:
     )
     df_performance = clean_columns(df_performance)
 
-    # 🔍 DEBUG: MOSTRAR COLUMNAS EXACTAS PERFORMANCE
-    st.write("🔍 COLUMNAS PERFORMANCE:", df_performance.columns.tolist())
+    # 🔥 FIX DEFINITIVO PARA "% Firt" CON BOM MAL CODIFICADO
+    if "ï»¿% Firt" in df_performance.columns:
+        df_performance.rename(columns={"ï»¿% Firt": "% Firt"}, inplace=True)
+
+    # 🔍 Debug para verificar que ya se corrigió
+    st.write("🔍 COLUMNAS PERFORMANCE (post-fix):", df_performance.columns.tolist())
 
     # AUDITORÍAS (autodetectar separador)
     df_auditorias = pd.read_csv(
@@ -154,3 +157,4 @@ if st.button("▶️ Generar Consolidado"):
         file_name="Consolidado_CMI.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
