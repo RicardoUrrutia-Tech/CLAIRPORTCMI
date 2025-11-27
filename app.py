@@ -28,7 +28,14 @@ if not all([ventas_file, perf_file, aud_file, off_file, dur_file]):
 # SAFE COLUMN CLEANER
 # ----------------------------------------------------
 def clean_columns(df):
-    df.columns = df.columns.str.replace("\ufeff", "", regex=False).str.strip()
+    # Limpia BOM y espacios invisibles
+    df.columns = (
+        df.columns
+        .str.replace("\ufeff", "", regex=False)
+        .str.replace("\u200b", "", regex=False)
+        .str.replace("\xa0", " ", regex=False)
+        .str.strip()
+    )
     return df
 
 # ----------------------------------------------------
@@ -37,6 +44,7 @@ def clean_columns(df):
 try:
     # VENTAS
     df_ventas = pd.read_excel(ventas_file)
+    df_ventas = clean_columns(df_ventas)
 
     # PERFORMANCE
     df_performance = pd.read_csv(
@@ -46,7 +54,9 @@ try:
         engine="python"
     )
     df_performance = clean_columns(df_performance)
-st.write("COLUMNAS PERFORMANCE:", df_performance.columns.tolist())  # 👈 AGREGAR ESTO
+
+    # 🔍 DEBUG: MOSTRAR COLUMNAS EXACTAS PERFORMANCE
+    st.write("🔍 COLUMNAS PERFORMANCE:", df_performance.columns.tolist())
 
     # AUDITORÍAS (autodetectar separador)
     df_auditorias = pd.read_csv(
@@ -144,4 +154,3 @@ if st.button("▶️ Generar Consolidado"):
         file_name="Consolidado_CMI.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
