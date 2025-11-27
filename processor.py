@@ -2,11 +2,13 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-# ----------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------
+
+# =====================================================================
+# HELPERS
+# =====================================================================
 
 def normalize(df):
+    """Limpia encabezados eliminando caracteres invisibles."""
     df.columns = (
         df.columns.astype(str)
         .str.replace("﻿", "")
@@ -17,38 +19,43 @@ def normalize(df):
 
 
 def to_date(x):
+    """Convierte múltiples formatos de fecha en date()."""
     if pd.isna(x):
         return None
     s = str(x).strip()
 
-    # Try common formats
-    for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
+    formatos = [
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%m/%d/%Y",
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+    ]
+
+    for fmt in formatos:
         try:
             return datetime.strptime(s, fmt).date()
         except:
             pass
 
-    # Fallback
     try:
         return pd.to_datetime(s).date()
     except:
         return None
 
 
-# ----------------------------------------------------------
+# =====================================================================
 # PROCESS 1: VENTAS
-# ----------------------------------------------------------
+# =====================================================================
+
 def process_ventas(df, date_from, date_to):
 
     df = normalize(df.copy())
 
-    # date column is "date"
     df["fecha"] = df["date"].apply(to_date)
 
-    # Apply ranges
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    # Clean price
     df["qt_price_local"] = (
         df["qt_price_local"]
         .astype(str)
@@ -58,57 +65,83 @@ def process_ventas(df, date_from, date_to):
     )
     df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce").fillna(0)
 
-    # Indicators
+    # Indicadores
     df["Ventas_Totales"] = df["qt_price_local"]
-
     df["Ventas_Compartidas"] = df.apply(
-        lambda x: x["qt_price_local"] if str(x["ds_product_name"]).lower() == "van_compartida" else 0,
+        lambda x: x["qt_price_local"]
+        if str(x["ds_product_name"]).lower() == "van_compartida"
+        else 0,
         axis=1,
     )
-
     df["Ventas_Exclusivas"] = df.apply(
-        lambda x: x["qt_price_local"] if str(x["ds_product_name"]).lower() == "van_exclusive" else 0,
+        lambda x: x["qt_price_local"]
+        if str(x["ds_product_name"]).lower() == "van_exclusive"
+        else 0,
         axis=1,
     )
 
-    # Group
     return df.groupby("fecha", as_index=False)[
         ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
     ].sum()
 
 
-# ----------------------------------------------------------
-# PROCESS 2: PERFORMANCE
-# ----------------------------------------------------------
+# =====================================================================
+# PROCESS 2: PERFORMANCE (ROBUSTO)
+# =====================================================================
+
 def process_performance(df, date_from, date_to):
 
     df = normalize(df.copy())
 
-    # Only C_Ops Support
+    # Solo C_Ops Support
+    if "Group Support Service" not in df.columns:
+        return pd.DataFrame()
+
     df = df[df["Group Support Service"] == "C_Ops Support"]
 
-    df["fecha"] = df["Fecha de Referencia"].apply(to_date)
+    # Fecha
+    if "Fecha de Referencia" not in df.columns:
+        return pd.DataFrame()
 
+    df["fecha"] = df["Fecha de Referencia"].apply(to_date)
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    # Count surveys
+    # Columnas requeridas
+    required_cols = {
+        "CSAT": np.nan,
+        "NPS Score": np.nan,
+        "Firt (h)": np.nan,
+        "Furt (h)": np.nan,
+        "% Firt": np.nan,
+        "% Furt": np.nan,
+        "Reopen": 0,
+        "Status": "",
+    }
+
+    for col, default in required_cols.items():
+        if col not in df.columns:
+            df[col] = default
+
+    # Convertir a número
+    numeric_cols = ["CSAT", "NPS Score", "Firt (h)", "Furt (h)", "% Firt", "% Furt", "Reopen"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Indicadores
     df["Q_Encuestas"] = df.apply(
-        lambda x: 1 if ((not pd.isna(x.get("CSAT"))) or (not pd.isna(x.get("NPS Score")))) else 0,
+        lambda x: 1
+        if not (pd.isna(x["CSAT"]) and pd.isna(x["NPS Score"]))
+        else 0,
         axis=1,
     )
 
-    # Tickets
     df["Q_Tickets"] = 1
 
     df["Q_Tickets_Resueltos"] = df["Status"].apply(
         lambda x: 1 if str(x).strip().lower() == "solved" else 0
     )
 
-    # Convert to numeric
-    convertibles = ["CSAT", "NPS Score", "Firt (h)", "Furt (h)", "% Firt", "% Furt", "Reopen"]
-    for col in convertibles:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
+    # Agrupación final
     out = df.groupby("fecha", as_index=False).agg({
         "Q_Encuestas": "sum",
         "CSAT": "mean",
@@ -132,12 +165,16 @@ def process_performance(df, date_from, date_to):
     })
 
 
-# ----------------------------------------------------------
+# =====================================================================
 # PROCESS 3: AUDITORÍAS
-# ----------------------------------------------------------
+# =====================================================================
+
 def process_auditorias(df, date_from, date_to):
 
     df = normalize(df.copy())
+
+    if "Date Time" not in df.columns:
+        return pd.DataFrame()
 
     df["fecha"] = df["Date Time"].apply(to_date)
 
@@ -148,18 +185,25 @@ def process_auditorias(df, date_from, date_to):
 
     return df.groupby("fecha", as_index=False).agg({
         "Q_Auditorias": "sum",
-        "Nota_Auditorias": "mean"
+        "Nota_Auditorias": "mean",
     })
 
 
-# ----------------------------------------------------------
+# =====================================================================
 # PROCESS 4: OFF TIME
-# ----------------------------------------------------------
+# =====================================================================
+
 def process_off_time(df, date_from, date_to):
 
     df = normalize(df.copy())
 
-    df["fecha"] = pd.to_datetime(df["tm_airport_arrival_requested_local_at"], errors="coerce").dt.date
+    if "tm_airport_arrival_requested_local_at" not in df.columns:
+        return pd.DataFrame()
+
+    df["fecha"] = pd.to_datetime(
+        df["tm_airport_arrival_requested_local_at"],
+        errors="coerce"
+    ).dt.date
 
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
@@ -170,12 +214,16 @@ def process_off_time(df, date_from, date_to):
     return df.groupby("fecha", as_index=False)[["Q_Reservas_Off_Time"]].sum()
 
 
-# ----------------------------------------------------------
+# =====================================================================
 # PROCESS 5: DURACIÓN > 90
-# ----------------------------------------------------------
+# =====================================================================
+
 def process_duracion(df, date_from, date_to):
 
     df = normalize(df.copy())
+
+    if "Start At Local Dt" not in df.columns:
+        return pd.DataFrame()
 
     df["fecha"] = df["Start At Local Dt"].apply(to_date)
 
@@ -190,9 +238,10 @@ def process_duracion(df, date_from, date_to):
     return df.groupby("fecha", as_index=False)[["Q_Viajes_90mas"]].sum()
 
 
-# ----------------------------------------------------------
-# MERGE GLOBAL
-# ----------------------------------------------------------
+# =====================================================================
+# CONSOLIDADO
+# =====================================================================
+
 def build_daily_global(dfs):
     merged = None
 
@@ -205,7 +254,7 @@ def build_daily_global(dfs):
 
     merged = merged.sort_values("fecha")
 
-    # Fill quantities only
+    # Rellenar solo los indicadores de cantidad
     for col in merged.columns:
         if col.startswith("Q_") or col.startswith("Ventas"):
             merged[col] = merged[col].fillna(0)
@@ -213,16 +262,18 @@ def build_daily_global(dfs):
     return merged
 
 
-# ----------------------------------------------------------
-# MAIN FUNCTION – 7 ARGUMENTS
-# ----------------------------------------------------------
+# =====================================================================
+# FUNCIÓN PRINCIPAL (7 ARGUMENTOS)
+# =====================================================================
+
 def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
 
     ventas = process_ventas(df_ventas, date_from, date_to)
-    performance = process_performance(df_perf, date_from, date_to)
-    auditorias = process_auditorias(df_aud, date_from, date_to)
-    offtime = process_off_time(df_off, date_from, date_to)
-    duracion = process_duracion(df_dur, date_from, date_to)
+    perf = process_performance(df_perf, date_from, date_to)
+    aud = process_auditorias(df_aud, date_from, date_to)
+    off = process_off_time(df_off, date_from, date_to)
+    dur = process_duracion(df_dur, date_from, date_to)
 
-    return build_daily_global([ventas, performance, auditorias, offtime, duracion])
+    return build_daily_global([ventas, perf, aud, off, dur])
+
 
