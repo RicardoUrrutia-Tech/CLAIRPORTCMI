@@ -4,27 +4,33 @@ from io import BytesIO
 import os
 import sys
 
-# ------------------------------------------------------------
-# FIX DEFINITIVO PARA ModuleNotFoundError
-# ------------------------------------------------------------
+# ==========================================================
+#   FIX DEFINITIVO PARA ModuleNotFoundError
+# ==========================================================
 
-# Ruta donde está ESTE MISMO archivo app.py
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Asegurar que esa ruta está en la búsqueda de módulos de Python
+# Limpiar sys.path de entradas inválidas
+cleaned = []
+for p in sys.path:
+    if p and p != "app.py":   # descartar rutas vacías o inválidas
+        cleaned.append(p)
+sys.path = cleaned
+
+# Asegurar que el directorio actual está en sys.path
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-# Debug opcional (puedes quitarlo después)
+# Debug (puedes desactivarlo luego)
 st.write("📂 Working Directory:", CURRENT_DIR)
-st.write("🔍 sys.path:", sys.path)
+st.write("🔍 Cleaned sys.path:", sys.path)
 
-# Ahora sí podemos importar con seguridad
+# Ahora sí importamos
 from processor import procesar_global
 
-# ------------------------------------------------------------
-# CONFIGURACIÓN GENERAL
-# ------------------------------------------------------------
+# ==========================================================
+#   CONFIG DE LA APP
+# ==========================================================
 st.set_page_config(page_title="Reporte Diario Consolidado", layout="wide")
 st.title("🟦 Reporte Diario Consolidado – Aeropuerto Cabify")
 
@@ -33,9 +39,9 @@ Esta aplicación consolida los reportes de **Ventas**, **Performance** y **Audit
 para generar un **resumen diario general**, sin distinguir agentes.
 """)
 
-# ------------------------------------------------------------
-# CARGA DE ARCHIVOS
-# ------------------------------------------------------------
+# ==========================================================
+#   CARGA DE ARCHIVOS
+# ==========================================================
 st.header("📤 Cargar Archivos")
 
 col1, col2 = st.columns(2)
@@ -57,9 +63,9 @@ auditorias_file = st.file_uploader(
     type=["csv"]
 )
 
-# ------------------------------------------------------------
-# PROCESAR
-# ------------------------------------------------------------
+# ==========================================================
+#   PROCESAR REPORTES
+# ==========================================================
 if st.button("🔄 Procesar Reportes"):
 
     if not ventas_file or not performance_file or not auditorias_file:
@@ -106,9 +112,9 @@ if st.button("🔄 Procesar Reportes"):
         st.error(f"❌ Error al cargar Auditorías: {e}")
         st.stop()
 
-    # ------------------------------------------------------------
-    # PROCESAR LOS DATOS
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
+    # PROCESAR
+    # --------------------------------------------------------
     df_diario = procesar_global(df_ventas, df_performance, df_auditorias)
 
     st.success("✔ Reporte generado correctamente.")
@@ -116,9 +122,9 @@ if st.button("🔄 Procesar Reportes"):
     st.header("📅 Resumen Diario Consolidado")
     st.dataframe(df_diario, use_container_width=True)
 
-    # ------------------------------------------------------------
-    # DESCARGA EXCEL
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
+    # DESCARGA
+    # --------------------------------------------------------
     st.header("📥 Descargar Excel Consolidado")
 
     def to_excel(df):
@@ -128,14 +134,13 @@ if st.button("🔄 Procesar Reportes"):
         writer.close()
         return output.getvalue()
 
-    excel_bytes = to_excel(df_diario)
-
     st.download_button(
         label="⬇ Descargar Reporte Diario Consolidado",
-        data=excel_bytes,
+        data=to_excel(df_diario),
         file_name="Reporte_Diario_Consolidado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 else:
     st.info("Sube todos los archivos y presiona **Procesar Reportes** para continuar.")
+
