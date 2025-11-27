@@ -7,42 +7,25 @@ st.set_page_config(page_title="CLAIRPORT – Consolidado Global", layout="wide")
 
 st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
 
-
 # =====================================================
 # LECTORES DE ARCHIVOS
 # =====================================================
 
 def read_generic_csv(uploaded_file):
-    """
-    Lector universal para:
-      - Ventas
-      - Performance
-      - OffTime
-      - Duración >90
-    Detecta automáticamente si el separador es ; o ,
-    Maneja BOM y latin-1
-    """
     raw = uploaded_file.read()
     uploaded_file.seek(0)
 
     text = raw.decode("latin-1").replace("\ufeff", "").replace("ï»¿", "")
-
     sep = ";" if text.count(";") > text.count(",") else ","
 
     return pd.read_csv(StringIO(text), sep=sep, engine="python")
 
 
 def read_auditorias_csv(uploaded_file):
-    """
-    Auditorías requiere un lector especial:
-      - Separador fijo ;
-      - quotechar y engine="python" por columnas con comillas
-    """
     raw = uploaded_file.read()
     uploaded_file.seek(0)
 
     text = raw.decode("latin-1").replace("\ufeff", "").replace("ï»¿", "")
-
     return pd.read_csv(StringIO(text), sep=";", quotechar='"', engine="python")
 
 
@@ -52,11 +35,33 @@ def read_auditorias_csv(uploaded_file):
 
 st.header("📥 Cargar Archivos")
 
-ventas_file = st.file_uploader("🔵 Cargar reporte de VENTAS (.csv o .xlsx)", type=["csv", "xlsx"])
-performance_file = st.file_uploader("🟢 Cargar reporte de PERFORMANCE (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("🟣 Cargar reporte de AUDITORÍAS (.csv)", type=["csv"])
-offtime_file = st.file_uploader("🟠 Cargar reporte de OFF-TIME (.csv)", type=["csv"])
-duracion_file = st.file_uploader("🔴 Cargar reporte DURACIÓN >90 MINUTOS (.csv)", type=["csv"])
+ventas_file = st.file_uploader("🔵 Ventas (.csv/.xlsx)", type=["csv", "xlsx"])
+performance_file = st.file_uploader("🟢 Performance (.csv)", type=["csv"])
+auditorias_file = st.file_uploader("🟣 Auditorías (.csv)", type=["csv"])
+offtime_file = st.file_uploader("🟠 Off-Time (.csv)", type=["csv"])
+duracion_file = st.file_uploader("🔴 Duración >90 minutos (.csv)", type=["csv"])
+
+st.divider()
+
+# =====================================================
+# SELECTOR DE FECHAS
+# =====================================================
+
+st.header("📅 Seleccionar Rango de Fechas")
+
+col1, col2 = st.columns(2)
+with col1:
+    date_from = st.date_input("📆 Desde:", value=None, format="YYYY-MM-DD")
+with col2:
+    date_to = st.date_input("📆 Hasta:", value=None, format="YYYY-MM-DD")
+
+if not date_from or not date_to:
+    st.warning("Selecciona ambas fechas para poder procesar.")
+    st.stop()
+
+# Convertimos a strings para processor_global
+date_from = pd.to_datetime(date_from)
+date_to = pd.to_datetime(date_to)
 
 st.divider()
 
@@ -67,18 +72,18 @@ st.divider()
 if st.button("🚀 Procesar Consolidado", type="primary"):
 
     if not all([ventas_file, performance_file, auditorias_file, offtime_file, duracion_file]):
-        st.error("⚠ Debes cargar TODOS los archivos para continuar.")
+        st.error("⚠ Debes cargar TODOS los archivos.")
         st.stop()
 
     # -------------------------------------------------
     # LECTURA DE ARCHIVOS
     # -------------------------------------------------
+
     try:
         if ventas_file.name.endswith(".csv"):
             df_ventas = read_generic_csv(ventas_file)
         else:
             df_ventas = pd.read_excel(ventas_file)
-
     except Exception as e:
         st.error(f"❌ Error leyendo Ventas: {e}")
         st.stop()
@@ -108,51 +113,50 @@ if st.button("🚀 Procesar Consolidado", type="primary"):
         st.stop()
 
     # -------------------------------------------------
-    # PROCESAMIENTO FINAL
+    # PROCESAR GLOBAL
     # -------------------------------------------------
+
     try:
-        df_final, df_semanal, df_mensual = procesar_global(
+        df_final, df_semanal, df_periodo = procesar_global(
             df_ventas,
             df_performance,
             df_auditorias,
             df_offtime,
-            df_duracion
+            df_duracion,
+            date_from,
+            date_to
         )
-
     except Exception as e:
         st.error(f"❌ Error al procesar datos: {e}")
         st.stop()
 
-    # =================================================
+    # -------------------------------------------------
     # MOSTRAR RESULTADOS
-    # =================================================
-    st.success("✅ Datos procesados correctamente")
+    # -------------------------------------------------
+    st.success("✅ Procesado con éxito")
 
-    st.subheader("📅 Reporte Diario Consolidado")
+    st.subheader("📅 Diario Consolidado")
     st.dataframe(df_final, use_container_width=True)
 
-    st.subheader("📆 Reporte Semanal Consolidado")
+    st.subheader("📆 Semanal Consolidado")
     st.dataframe(df_semanal, use_container_width=True)
 
-    st.subheader("🗓 Reporte Total del Periodo")
-    st.dataframe(df_mensual, use_container_width=True)
+    st.subheader("📊 Consolidado del Periodo")
+    st.dataframe(df_periodo, use_container_width=True)
 
-    # =================================================
+    # -------------------------------------------------
     # DESCARGA EN EXCEL
-    # =================================================
-    st.subheader("⬇ Descargar Consolidado en Excel")
-
+    # -------------------------------------------------
     import io
-    import xlsxwriter
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df_final.to_excel(writer, index=False, sheet_name="Diario")
         df_semanal.to_excel(writer, index=False, sheet_name="Semanal")
-        df_mensual.to_excel(writer, index=False, sheet_name="Total Periodo")
+        df_periodo.to_excel(writer, index=False, sheet_name="Periodo")
 
     st.download_button(
-        label="💾 Descargar Excel Consolidado",
+        "💾 Descargar Excel",
         data=output.getvalue(),
         file_name="Consolidado_Global.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
