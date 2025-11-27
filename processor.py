@@ -226,4 +226,3 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
 
     return df.sort_values("fecha")
 
-
