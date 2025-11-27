@@ -1,59 +1,85 @@
 import streamlit as st
 import pandas as pd
+import csv
 from io import BytesIO
 from processor import procesar_global
 
 st.set_page_config(page_title="CMI – Consolidado Diario", layout="wide")
 st.title("📊 Consolidado Diario – Aeropuerto")
 
-# ===============================
+# ======================================================
+# FUNCIÓN UNIVERSAL PARA LEER CUALQUIER CSV
+# ======================================================
+def read_any_csv(uploaded_file):
+    try:
+        sample = uploaded_file.read().decode("latin-1")
+        uploaded_file.seek(0)
+        dialect = csv.Sniffer().sniff(sample.splitlines()[0])
+        sep = dialect.delimiter
+    except:
+        sep = ","  # fallback
+
+    return pd.read_csv(uploaded_file, sep=sep, encoding="latin-1", engine="python")
+
+
+# ======================================================
 # CARGA DE ARCHIVOS
-# ===============================
+# ======================================================
 ventas_file = st.file_uploader("Ventas (.xlsx)", type=["xlsx"])
 performance_file = st.file_uploader("Performance (.csv)", type=["csv"])
 auditorias_file = st.file_uploader("Auditorías (.csv)", type=["csv"])
 offtime_file = st.file_uploader("Off-Time (.csv)", type=["csv"])
 duracion_file = st.file_uploader("Duración >90 min (.csv)", type=["csv"])
 
-# ===============================
+# ======================================================
 # FILTRO DE FECHAS
-# ===============================
+# ======================================================
 st.subheader("📅 Seleccione rango de fechas")
 col1, col2 = st.columns(2)
 date_from = col1.date_input("Desde fecha", None)
 date_to = col2.date_input("Hasta fecha", None)
 
-# ===============================
+
+# ======================================================
 # PROCESAR
-# ===============================
+# ======================================================
 if st.button("Procesar Consolidado"):
 
     if not all([ventas_file, performance_file, auditorias_file, offtime_file, duracion_file]):
-        st.error("Falta cargar archivos.")
+        st.error("❌ Falta cargar archivos.")
         st.stop()
 
     try:
         df_ventas = pd.read_excel(ventas_file)
-        df_perf = pd.read_csv(performance_file, sep=",", encoding="latin-1", engine="python")
-        df_aud = pd.read_csv(auditorias_file, sep=",", encoding="latin-1", engine="python")
-        df_off = pd.read_csv(offtime_file, sep=",", encoding="latin-1", engine="python")
-        df_dur = pd.read_csv(duracion_file, sep=",", encoding="latin-1", engine="python")
+
+        df_perf = read_any_csv(performance_file)
+        df_aud = read_any_csv(auditorias_file)
+        df_off = read_any_csv(offtime_file)
+        df_dur = read_any_csv(duracion_file)
+
     except Exception as e:
         st.error(f"❌ Error leyendo archivos: {e}")
         st.stop()
 
     try:
-        df_final = procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to)
+        df_final = procesar_global(
+            df_ventas, df_perf, df_aud, df_off, df_dur,
+            date_from, date_to
+        )
     except Exception as e:
         st.error(f"❌ Error al procesar datos: {e}")
         st.stop()
 
+    # ======================================================
+    # MOSTRAR RESULTADO
+    # ======================================================
     st.success("Procesado correctamente ✔")
     st.dataframe(df_final, height=450)
 
-    # ===============================
-    # EXPORTAR EXCEL CON FORMATO MONEDA
-    # ===============================
+
+    # ======================================================
+    # EXPORTAR A EXCEL (CON FORMATO CLP PARA VENTAS)
+    # ======================================================
     def to_excel(df):
         output = BytesIO()
         writer = pd.ExcelWriter(output, engine="xlsxwriter")
@@ -68,12 +94,12 @@ if st.button("Procesar Consolidado"):
             "align": "right"
         })
 
-        colnames = ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
+        columnas_ventas = ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]
 
-        for col in colnames:
+        for col in columnas_ventas:
             if col in df.columns:
-                idx = df.columns.get_loc(col)
-                worksheet.set_column(idx, idx, 18, formato_clp)
+                col_idx = df.columns.get_loc(col)
+                worksheet.set_column(col_idx, col_idx, 18, formato_clp)
 
         writer.close()
         return output.getvalue()
@@ -81,10 +107,5 @@ if st.button("Procesar Consolidado"):
     excel_bytes = to_excel(df_final)
 
     st.download_button(
-        "⬇ Descargar Excel Consolidado",
-        data=excel_bytes,
-        file_name="Consolidado_Diario.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 
 
