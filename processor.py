@@ -6,7 +6,11 @@ import numpy as np
 # ============================================================
 
 def clean_cols(df):
-    df.columns = df.columns.str.replace("ï»¿", "", regex=False).str.strip()
+    df.columns = (
+        df.columns.astype(str)
+        .str.replace("ï»¿", "", regex=False)
+        .str.strip()
+    )
     return df
 
 
@@ -20,8 +24,7 @@ def process_ventas(df):
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["qt_price_local"] = (
-        df["qt_price_local"]
-        .astype(str)
+        df["qt_price_local"].astype(str)
         .str.replace(",", "", regex=False)
         .str.replace(" ", "", regex=False)
         .str.replace("$", "", regex=False)
@@ -79,6 +82,7 @@ def process_performance(df):
 def process_auditorias(df):
     df = clean_cols(df)
 
+    # lectura correcta: Date Time = dd-mm-YYYY
     df["fecha"] = pd.to_datetime(df["Date Time"], format="%d-%m-%Y", errors="coerce").dt.normalize()
 
     df["Q_Auditorias"] = 1
@@ -114,7 +118,7 @@ def process_offtime(df):
 
 
 # ============================================================
-# 🟥 PROCESAR DURACIÓN > 90
+# 🟥 PROCESAR DURACIÓN > 90 MINUTOS
 # ============================================================
 
 def process_duracion(df):
@@ -169,9 +173,6 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    # ============================================================
-    # Relleno de columnas de cantidad
-    # ============================================================
     q_cols = [
         "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
         "Q_Auditorias","OFF_TIME","Duracion_90",
@@ -182,10 +183,7 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    # ============================================================
-    # Formato de promedios → 2 decimales
-    # ============================================================
-
+    # promedios → 2 decimales
     avg_cols = [
         "CSAT","NPS Score","Firt (h)","Furt (h)",
         "firt_pct","furt_pct","Nota_Auditorias"
@@ -193,59 +191,29 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
 
     for c in avg_cols:
         if c in df.columns:
-            df[c] = df[c].replace({0: np.nan})
+            df[c] = df[c].replace({0: np.nan}).apply(lambda x: round(float(x),2) if isinstance(x,(int,float)) else x)
 
-    def fmt2(x):
-        if isinstance(x, (int, float, np.number)):
-            return round(float(x), 2)
-        return x
-
-    for c in avg_cols:
+    # porcentajes
+    for c in ["firt_pct","furt_pct"]:
         if c in df.columns:
-            df[c] = df[c].apply(fmt2)
+            df[c] = df[c].apply(lambda x: f"{round(float(x)*100,2)}%" if isinstance(x,(int,float)) else x)
 
-    # ============================================================
-    # Porcentajes con símbolo
-    # ============================================================
-
-    pct_cols = ["firt_pct","furt_pct"]
-
-    def fmt_pct(x):
-        if isinstance(x, (int, float, np.number)):
-            return f"{round(float(x)*100, 2)}%"
-        return x
-
-    for c in pct_cols:
-        if c in df.columns:
-            df[c] = df[c].apply(fmt_pct)
-
-    # ============================================================
-    # Formato dinero: $ 1.234,56
-    # ============================================================
-
-    money_cols = ["Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"]
-
+    # dinero sin decimales
     def fmt_money(x):
         if not isinstance(x, (int, float, np.number)):
             return x
-        return "$ {:,.2f}".format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
+        return "$ {:,.0f}".format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
 
-    for c in money_cols:
+    for c in ["Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"]:
         if c in df.columns:
             df[c] = df[c].apply(fmt_money)
 
-    # ============================================================
-    # Convertir NaN de promedios → "–"
-    # ============================================================
-
+    # NaN promedios → “–”
     for c in avg_cols:
         if c in df.columns:
             df[c] = df[c].replace({np.nan:"–"})
 
-    # ============================================================
     # SEMANAL
-    # ============================================================
-
     df_sem = df.copy()
     df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
 
@@ -253,16 +221,14 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
 
     df_sem = df_sem.groupby("Semana")[numeric_cols].sum().reset_index()
 
-    # ============================================================
-    # RESUMEN PERIODO
-    # ============================================================
-
+    # PERIODO
     df_per = df.copy()
     df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
 
     df_per = df_per.groupby("Periodo")[numeric_cols].sum().reset_index()
 
     return df, df_sem, df_per
+
 
 
 
