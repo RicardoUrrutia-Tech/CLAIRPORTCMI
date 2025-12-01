@@ -54,7 +54,6 @@ def process_performance(df):
 
     df["Q_Ticket"] = 1
     df["Q_Tickets_Resueltos"] = np.where(df["Status"].str.lower() == "solved", 1, 0)
-
     df["Q_Encuestas"] = np.where(df["CSAT"].notna() | df["NPS Score"].notna(), 1, 0)
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -74,55 +73,14 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS (CORREGIDO)
+# 🟪 PROCESAR AUDITORÍAS
 # ============================================================
 
 def process_auditorias(df):
     df = clean_cols(df)
 
-    # Buscar la columna válida de fecha
-    col_fecha = None
-    for c in ["Date Time Reference", "Date Time", "ï»¿Date Time"]:
-        if c in df.columns:
-            col_fecha = c
-            break
+    df["fecha"] = pd.to_datetime(df["Date Time"], format="%d-%m-%Y", errors="coerce").dt.normalize()
 
-    if col_fecha is None:
-        # Sin columna de fecha → no se puede procesar
-        return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
-
-    # Parser robusto (idéntico al processor antiguo por agentes)
-    def to_date(x):
-        if pd.isna(x):
-            return None
-        s = str(x).strip()
-
-        # YYYY/MM/DD
-        if "/" in s and len(s.split("/")[0]) == 4:
-            try: return pd.to_datetime(s, format="%Y/%m/%d").date()
-            except: pass
-
-        # DD-MM-YYYY
-        if "-" in s and len(s.split("-")[2]) == 4 and len(s.split("-")[0]) <= 2:
-            try: return pd.to_datetime(s, format="%d-%m-%Y").date()
-            except: pass
-
-        # MM/DD/YYYY
-        if "/" in s and len(s.split("/")[2]) == 4:
-            try: return pd.to_datetime(s, format="%m/%d/%Y").date()
-            except: pass
-
-        try:
-            return pd.to_datetime(s).date()
-        except:
-            return None
-
-    # Aplicar fecha correcta
-    df["fecha"] = df[col_fecha].apply(to_date)
-    df = df[df["fecha"].notna()]
-    df["fecha"] = pd.to_datetime(df["fecha"])
-
-    # Crear métricas
     df["Q_Auditorias"] = 1
     df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce")
 
@@ -145,8 +103,7 @@ def process_offtime(df):
 
     df["OFF_TIME"] = np.where(
         df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)",
-        1,
-        0
+        1, 0
     )
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -157,7 +114,7 @@ def process_offtime(df):
 
 
 # ============================================================
-# 🟥 PROCESAR DURACIÓN > 90 MINUTOS
+# 🟥 PROCESAR DURACIÓN > 90
 # ============================================================
 
 def process_duracion(df):
@@ -175,7 +132,7 @@ def process_duracion(df):
 
 
 # ============================================================
-# 📅 FORMATO DE SEMANA HUMANA
+# 📅 FORMATO SEMANA HUMANA
 # ============================================================
 
 def semana_humana(fecha):
@@ -202,7 +159,6 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     o = process_offtime(df_off)
     d = process_duracion(df_dur)
 
-    # Merge final
     df = (
         v.merge(p, on="fecha", how="outer")
          .merge(a, on="fecha", how="outer")
@@ -213,29 +169,81 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    # Columnas de cantidad
+    # ============================================================
+    # Relleno de columnas de cantidad
+    # ============================================================
     q_cols = [
-        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
-        "Q_Auditorias", "OFF_TIME", "Duracion_90",
-        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
+        "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
+        "Q_Auditorias","OFF_TIME","Duracion_90",
+        "Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"
     ]
 
     for c in q_cols:
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    # Promedios → convertir 0 a “–”
+    # ============================================================
+    # Formato de promedios → 2 decimales
+    # ============================================================
+
     avg_cols = [
-        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
-        "firt_pct", "furt_pct", "Nota_Auditorias"
+        "CSAT","NPS Score","Firt (h)","Furt (h)",
+        "firt_pct","furt_pct","Nota_Auditorias"
     ]
 
     for c in avg_cols:
         if c in df.columns:
-            df[c] = df[c].replace({0: np.nan}).fillna("–")
+            df[c] = df[c].replace({0: np.nan})
+
+    def fmt2(x):
+        if isinstance(x, (int, float, np.number)):
+            return round(float(x), 2)
+        return x
+
+    for c in avg_cols:
+        if c in df.columns:
+            df[c] = df[c].apply(fmt2)
 
     # ============================================================
-    # 📅 RESUMEN SEMANAL
+    # Porcentajes con símbolo
+    # ============================================================
+
+    pct_cols = ["firt_pct","furt_pct"]
+
+    def fmt_pct(x):
+        if isinstance(x, (int, float, np.number)):
+            return f"{round(float(x)*100, 2)}%"
+        return x
+
+    for c in pct_cols:
+        if c in df.columns:
+            df[c] = df[c].apply(fmt_pct)
+
+    # ============================================================
+    # Formato dinero: $ 1.234,56
+    # ============================================================
+
+    money_cols = ["Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"]
+
+    def fmt_money(x):
+        if not isinstance(x, (int, float, np.number)):
+            return x
+        return "$ {:,.2f}".format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
+
+    for c in money_cols:
+        if c in df.columns:
+            df[c] = df[c].apply(fmt_money)
+
+    # ============================================================
+    # Convertir NaN de promedios → "–"
+    # ============================================================
+
+    for c in avg_cols:
+        if c in df.columns:
+            df[c] = df[c].replace({np.nan:"–"})
+
+    # ============================================================
+    # SEMANAL
     # ============================================================
 
     df_sem = df.copy()
@@ -246,7 +254,7 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df_sem = df_sem.groupby("Semana")[numeric_cols].sum().reset_index()
 
     # ============================================================
-    # 📅 RESUMEN DEL PERIODO
+    # RESUMEN PERIODO
     # ============================================================
 
     df_per = df.copy()
@@ -255,5 +263,6 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df_per = df_per.groupby("Periodo")[numeric_cols].sum().reset_index()
 
     return df, df_sem, df_per
+
 
 
