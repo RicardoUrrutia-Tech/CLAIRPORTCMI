@@ -7,6 +7,22 @@ st.set_page_config(page_title="CLAIRPORT – Consolidado Global", layout="wide")
 
 st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
 
+
+# =====================================================
+# FORMATEO PARA MOSTRAR DINERO SOLO EN TABLA DIARIA
+# =====================================================
+
+def mostrar_dinero(df):
+    df = df.copy()
+    for c in ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"]:
+        if c in df.columns:
+            df[c] = df[c].apply(
+                lambda x: f"$ {int(round(x)):,}".replace(",", ".")
+                if isinstance(x, (int, float)) else x
+            )
+    return df
+
+
 # =====================================================
 # LECTORES DE ARCHIVOS
 # =====================================================
@@ -59,7 +75,6 @@ if not date_from or not date_to:
     st.warning("Selecciona ambas fechas para poder procesar.")
     st.stop()
 
-# Convertimos a strings para processor_global
 date_from = pd.to_datetime(date_from)
 date_to = pd.to_datetime(date_to)
 
@@ -75,68 +90,31 @@ if st.button("🚀 Procesar Consolidado", type="primary"):
         st.error("⚠ Debes cargar TODOS los archivos.")
         st.stop()
 
-    # -------------------------------------------------
-    # LECTURA DE ARCHIVOS
-    # -------------------------------------------------
-
+    # Lectura
     try:
-        if ventas_file.name.endswith(".csv"):
-            df_ventas = read_generic_csv(ventas_file)
-        else:
-            df_ventas = pd.read_excel(ventas_file)
+        df_ventas = read_generic_csv(ventas_file) if ventas_file.name.endswith(".csv") else pd.read_excel(ventas_file)
+        df_perf = read_generic_csv(performance_file)
+        df_aud = read_auditorias_csv(auditorias_file)
+        df_off = read_generic_csv(offtime_file)
+        df_dur = read_generic_csv(duracion_file)
     except Exception as e:
-        st.error(f"❌ Error leyendo Ventas: {e}")
+        st.error(f"❌ Error leyendo archivos: {e}")
         st.stop()
 
-    try:
-        df_performance = read_generic_csv(performance_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Performance: {e}")
-        st.stop()
-
-    try:
-        df_auditorias = read_auditorias_csv(auditorias_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Auditorías: {e}")
-        st.stop()
-
-    try:
-        df_offtime = read_generic_csv(offtime_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Off-Time: {e}")
-        st.stop()
-
-    try:
-        df_duracion = read_generic_csv(duracion_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Duración >90: {e}")
-        st.stop()
-
-    # -------------------------------------------------
-    # PROCESAR GLOBAL
-    # -------------------------------------------------
-
+    # Procesar
     try:
         df_final, df_semanal, df_periodo = procesar_global(
-            df_ventas,
-            df_performance,
-            df_auditorias,
-            df_offtime,
-            df_duracion,
-            date_from,
-            date_to
+            df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to
         )
     except Exception as e:
         st.error(f"❌ Error al procesar datos: {e}")
         st.stop()
 
-    # -------------------------------------------------
-    # MOSTRAR RESULTADOS
-    # -------------------------------------------------
     st.success("✅ Procesado con éxito")
 
+    # Mostrar tablas
     st.subheader("📅 Diario Consolidado")
-    st.dataframe(df_final, use_container_width=True)
+    st.dataframe(mostrar_dinero(df_final), use_container_width=True)
 
     st.subheader("📆 Semanal Consolidado")
     st.dataframe(df_semanal, use_container_width=True)
@@ -144,11 +122,8 @@ if st.button("🚀 Procesar Consolidado", type="primary"):
     st.subheader("📊 Consolidado del Periodo")
     st.dataframe(df_periodo, use_container_width=True)
 
-    # -------------------------------------------------
-    # DESCARGA EN EXCEL
-    # -------------------------------------------------
+    # Descargar Excel
     import io
-
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df_final.to_excel(writer, index=False, sheet_name="Diario")
@@ -161,4 +136,5 @@ if st.button("🚀 Procesar Consolidado", type="primary"):
         file_name="Consolidado_Global.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
