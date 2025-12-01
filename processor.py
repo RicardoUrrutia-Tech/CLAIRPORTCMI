@@ -73,12 +73,13 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS
+# 🟪 PROCESAR AUDITORÍAS (CORREGIDO Y ROBUSTO)
 # ============================================================
 
 def process_auditorias(df):
     df = clean_cols(df)
 
+    # Buscar la columna de fecha correcta
     col_fecha = None
     for c in ["Date Time Reference", "Date Time", "ï»¿Date Time"]:
         if c in df.columns:
@@ -88,19 +89,23 @@ def process_auditorias(df):
     if col_fecha is None:
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
+    # Parser robusto
     def to_date(x):
         if pd.isna(x):
             return None
         s = str(x).strip()
 
+        # YYYY/MM/DD
         if "/" in s and len(s.split("/")[0]) == 4:
             try: return pd.to_datetime(s, format="%Y/%m/%d").date()
             except: pass
 
+        # DD-MM-YYYY
         if "-" in s and len(s.split("-")[2]) == 4 and len(s.split("-")[0]) <= 2:
             try: return pd.to_datetime(s, format="%d-%m-%Y").date()
             except: pass
 
+        # MM/DD/YYYY
         if "/" in s and len(s.split("/")[2]) == 4:
             try: return pd.to_datetime(s, format="%m/%d/%Y").date()
             except: pass
@@ -129,7 +134,6 @@ def process_auditorias(df):
 
 def process_offtime(df):
     df = clean_cols(df)
-
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["OFF_TIME"] = np.where(
@@ -151,7 +155,6 @@ def process_offtime(df):
 
 def process_duracion(df):
     df = clean_cols(df)
-
     df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
 
     df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
@@ -164,7 +167,7 @@ def process_duracion(df):
 
 
 # ============================================================
-# 📅 SEMANA HUMANA
+# 📅 FORMATO SEMANA
 # ============================================================
 
 def semana_humana(fecha):
@@ -180,7 +183,7 @@ def semana_humana(fecha):
 
 
 # ============================================================
-# 🔵 PROCESAR GLOBAL – DIARIO + SEMANAL + PERIODO
+# 🔵 PROCESAR GLOBAL
 # ============================================================
 
 def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_to):
@@ -201,48 +204,29 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
+    # Columnas numéricas que deben mantenerse numéricas
     q_cols = [
-        "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
-        "Q_Auditorias","OFF_TIME","Duracion_90",
-        "Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"
+        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Auditorias", "OFF_TIME", "Duracion_90",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
     ]
 
     for c in q_cols:
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    # ======================================================
-    # ⭐ FORMATOS QUE ME PEDISTE ⭐
-    # ======================================================
+    # Promedios formateados
+    avg_cols = [
+        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
+        "firt_pct", "furt_pct", "Nota_Auditorias"
+    ]
 
-    # --- Formato para porcentajes ---
-    pct_cols = ["firt_pct", "furt_pct"]
-    for c in pct_cols:
-        if c in df.columns:
-            df[c] = df[c].apply(lambda x:
-                f"{x:.2f}%" if isinstance(x, (float, int)) and not pd.isna(x) else "–"
-            )
-
-    # --- Promedios con 2 decimales ---
-    avg_cols = ["CSAT", "NPS Score", "Firt (h)", "Furt (h)", "Nota_Auditorias"]
     for c in avg_cols:
         if c in df.columns:
-            df[c] = df[c].apply(lambda x:
-                f"{x:.2f}" if isinstance(x, (float, int)) and not pd.isna(x) else "–"
-            )
-
-    # --- Formato Dinero Sin Decimales ---
-    def fmt_money(x):
-        if isinstance(x, (int, float, np.number)):
-            return "$ {:,.0f}".format(x).replace(",", ".")
-        return x
-
-    for c in ["Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"]:
-        if c in df.columns:
-            df[c] = df[c].apply(fmt_money)
+            df[c] = df[c].apply(lambda x: round(x, 2) if isinstance(x, (int, float, np.number)) else "–")
 
     # ============================================================
-    # 📆 SEMANAL
+    # 📅 SEMANAL
     # ============================================================
 
     df_sem = df.copy()
@@ -253,7 +237,7 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
     df_sem = df_sem.groupby("Semana")[numeric_cols].sum().reset_index()
 
     # ============================================================
-    # 📊 PERIODO
+    # 📅 PERIODO
     # ============================================================
 
     df_per = df.copy()
