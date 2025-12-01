@@ -6,11 +6,7 @@ import numpy as np
 # ============================================================
 
 def clean_cols(df):
-    df.columns = (
-        df.columns.astype(str)
-        .str.replace("ï»¿", "", regex=False)
-        .str.strip()
-    )
+    df.columns = df.columns.str.replace("ï»¿", "", regex=False).str.strip()
     return df
 
 
@@ -24,7 +20,8 @@ def process_ventas(df):
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["qt_price_local"] = (
-        df["qt_price_local"].astype(str)
+        df["qt_price_local"]
+        .astype(str)
         .str.replace(",", "", regex=False)
         .str.replace(" ", "", regex=False)
         .str.replace("$", "", regex=False)
@@ -57,6 +54,7 @@ def process_performance(df):
 
     df["Q_Ticket"] = 1
     df["Q_Tickets_Resueltos"] = np.where(df["Status"].str.lower() == "solved", 1, 0)
+
     df["Q_Encuestas"] = np.where(df["CSAT"].notna() | df["NPS Score"].notna(), 1, 0)
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -76,14 +74,50 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS
+# 🟪 PROCESAR AUDITORÍAS (VERSIÓN QUE SÍ FUNCIONA)
 # ============================================================
 
 def process_auditorias(df):
     df = clean_cols(df)
 
-    # lectura correcta: Date Time = dd-mm-YYYY
-    df["fecha"] = pd.to_datetime(df["Date Time"], format="%d-%m-%Y", errors="coerce").dt.normalize()
+    # Detectar columna de fecha válida
+    col_fecha = None
+    for c in ["Date Time Reference", "Date Time", "ï»¿Date Time"]:
+        if c in df.columns:
+            col_fecha = c
+            break
+
+    if col_fecha is None:
+        # No hay columna usable
+        return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
+
+    # Parser robusto de fechas
+    def to_date(x):
+        if pd.isna(x):
+            return None
+        s = str(x).strip()
+
+        # YYYY/MM/DD
+        if "/" in s and len(s.split("/")[0]) == 4:
+            try: return pd.to_datetime(s, format="%Y/%m/%d").date()
+            except: pass
+
+        # DD-MM-YYYY
+        if "-" in s and len(s.split("-")[2]) == 4 and len(s.split("-")[0]) <= 2:
+            try: return pd.to_datetime(s, format="%d-%m-%Y").date()
+            except: pass
+
+        # MM/DD/YYYY
+        if "/" in s and len(s.split("/")[2]) == 4:
+            try: return pd.to_datetime(s, format="%m/%d/%Y").date()
+            except: pass
+
+        try: return pd.to_datetime(s).date()
+        except: return None
+
+    df["fecha"] = df[col_fecha].apply(to_date)
+    df = df[df["fecha"].notna()]
+    df["fecha"] = pd.to_datetime(df["fecha"])
 
     df["Q_Auditorias"] = 1
     df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce")
@@ -107,7 +141,8 @@ def process_offtime(df):
 
     df["OFF_TIME"] = np.where(
         df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)",
-        1, 0
+        1,
+        0
     )
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -136,7 +171,7 @@ def process_duracion(df):
 
 
 # ============================================================
-# 📅 FORMATO SEMANA HUMANA
+# 📅 SEMANA HUMANA
 # ============================================================
 
 def semana_humana(fecha):
@@ -183,7 +218,7 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    # promedios → 2 decimales
+    # Promedios → “–” donde no aplica
     avg_cols = [
         "CSAT","NPS Score","Firt (h)","Furt (h)",
         "firt_pct","furt_pct","Nota_Auditorias"
@@ -191,14 +226,9 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
 
     for c in avg_cols:
         if c in df.columns:
-            df[c] = df[c].replace({0: np.nan}).apply(lambda x: round(float(x),2) if isinstance(x,(int,float)) else x)
+            df[c] = df[c].replace({0: np.nan}).fillna("–")
 
-    # porcentajes
-    for c in ["firt_pct","furt_pct"]:
-        if c in df.columns:
-            df[c] = df[c].apply(lambda x: f"{round(float(x)*100,2)}%" if isinstance(x,(int,float)) else x)
-
-    # dinero sin decimales
+    # ===== FORMATO DINERO SIN DECIMALES =====
     def fmt_money(x):
         if not isinstance(x, (int, float, np.number)):
             return x
@@ -208,12 +238,10 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
         if c in df.columns:
             df[c] = df[c].apply(fmt_money)
 
-    # NaN promedios → “–”
-    for c in avg_cols:
-        if c in df.columns:
-            df[c] = df[c].replace({np.nan:"–"})
+    # ============================================================
+    # 📆 SEMANAL
+    # ============================================================
 
-    # SEMANAL
     df_sem = df.copy()
     df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
 
@@ -221,7 +249,10 @@ def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, date_from, date_
 
     df_sem = df_sem.groupby("Semana")[numeric_cols].sum().reset_index()
 
-    # PERIODO
+    # ============================================================
+    # 📊 PERIODO
+    # ============================================================
+
     df_per = df.copy()
     df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
 
