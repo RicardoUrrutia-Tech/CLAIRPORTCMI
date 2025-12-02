@@ -6,27 +6,22 @@ from processor import procesar_global
 st.set_page_config(page_title="CLAIRPORT – Consolidado Global", layout="wide")
 st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
 
-
 # =====================================================
-# 📥 LECTORES ROBUSTOS
+# 📥 LECTORES ROBUSTOS PARA CSV/EXCEL
 # =====================================================
 
 def read_generic_csv(uploaded_file):
-    """Lee CSV con autodetección de separador y elimina BOM."""
     raw = uploaded_file.read()
     uploaded_file.seek(0)
     text = raw.decode("latin-1").replace("ï»¿", "").replace("\ufeff", "")
     sep = ";" if text.count(";") > text.count(",") else ","
     return pd.read_csv(StringIO(text), sep=sep, engine="python")
 
-
 def read_auditorias_csv(uploaded_file):
-    """Lee auditorías con separador fijo ';'."""
     raw = uploaded_file.read()
     uploaded_file.seek(0)
     text = raw.decode("latin-1").replace("ï»¿", "").replace("\ufeff", "")
     return pd.read_csv(StringIO(text), sep=";", engine="python")
-
 
 # =====================================================
 # 📥 CARGA DE ARCHIVOS
@@ -37,7 +32,7 @@ st.header("📥 Cargar Archivos – Todos obligatorios")
 col1, col2 = st.columns(2)
 
 with col1:
-    ventas_file = st.file_uploader("🔵 Ventas (.csv / .xlsx)", type=["csv", "xlsx"])
+    ventas_file = st.file_uploader("🔵 Ventas (.csv o .xlsx)", type=["csv", "xlsx"])
     performance_file = st.file_uploader("🟢 Performance (.csv)", type=["csv"])
     auditorias_file = st.file_uploader("🟣 Auditorías (.csv)", type=["csv"])
     offtime_file = st.file_uploader("🟠 Off-Time (.csv)", type=["csv"])
@@ -46,11 +41,10 @@ with col2:
     duracion90_file = st.file_uploader("🔴 Duración >90 min (.csv)", type=["csv"])
     duracion30_file = st.file_uploader("🟤 Duración >30 min (.csv)", type=["csv"])
     inspecciones_file = st.file_uploader("🚗 Inspecciones Vehiculares (.xlsx)", type=["xlsx"])
-    abandonados_file = st.file_uploader("🟣 Clientes Abandonados (.xlsx)", type=["xlsx"])
-    rescates_file = st.file_uploader("🚑 Rescates DO General (.csv)", type=["csv"])
+    abandonados_file = st.file_uploader("👥 Clientes Abandonados (.xlsx)", type=["xlsx"])
+    rescates_file = st.file_uploader("🆘 Rescates DO Aero (.csv)", type=["csv"])
 
 st.divider()
-
 
 # =====================================================
 # 📅 RANGO DE FECHAS
@@ -61,7 +55,6 @@ st.header("📅 Seleccionar Rango de Fechas")
 col_a, col_b = st.columns(2)
 with col_a:
     date_from = st.date_input("📆 Desde:", value=None, format="YYYY-MM-DD")
-
 with col_b:
     date_to = st.date_input("📆 Hasta:", value=None, format="YYYY-MM-DD")
 
@@ -74,9 +67,8 @@ date_to = pd.to_datetime(date_to)
 
 st.divider()
 
-
 # =====================================================
-# 🚀 BOTÓN DE PROCESAR
+# 🚀 PROCESAR
 # =====================================================
 
 if st.button("🚀 Procesar Consolidado Global", type="primary"):
@@ -92,7 +84,7 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         st.stop()
 
     # =====================================================
-    # 🧩 LECTURA DE ARCHIVOS
+    # 📌 LECTURA DE ARCHIVOS
     # =====================================================
 
     try:
@@ -105,19 +97,19 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         st.stop()
 
     try:
-        df_perf = read_generic_csv(performance_file)
+        df_performance = read_generic_csv(performance_file)
     except Exception as e:
         st.error(f"❌ Error leyendo Performance: {e}")
         st.stop()
 
     try:
-        df_aud = read_auditorias_csv(auditorias_file)
+        df_auditorias = read_auditorias_csv(auditorias_file)
     except Exception as e:
         st.error(f"❌ Error leyendo Auditorías: {e}")
         st.stop()
 
     try:
-        df_off = read_generic_csv(offtime_file)
+        df_offtime = read_generic_csv(offtime_file)
     except Exception as e:
         st.error(f"❌ Error leyendo Off-Time: {e}")
         st.stop()
@@ -125,13 +117,13 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     try:
         df_dur90 = read_generic_csv(duracion90_file)
     except Exception as e:
-        st.error(f"❌ Error leyendo Duración >90: {e}")
+        st.error(f"❌ Error leyendo Duración >90 min: {e}")
         st.stop()
 
     try:
         df_dur30 = read_generic_csv(duracion30_file)
     except Exception as e:
-        st.error(f"❌ Error leyendo Duración >30: {e}")
+        st.error(f"❌ Error leyendo Duración >30 min: {e}")
         st.stop()
 
     try:
@@ -143,24 +135,24 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     try:
         df_aband = pd.read_excel(abandonados_file)
     except Exception as e:
-        st.error(f"❌ Error leyendo Abandonados: {e}")
+        st.error(f"❌ Error leyendo Clientes Abandonados (Excel): {e}")
         st.stop()
 
     try:
         df_resc = read_generic_csv(rescates_file)
     except Exception as e:
-        st.error(f"❌ Error leyendo Rescates DO General: {e}")
+        st.error(f"❌ Error leyendo Rescates: {e}")
         st.stop()
 
     # =====================================================
-    # 📊 PROCESAMIENTO GLOBAL
+    # 🔵 PROCESAMIENTO GLOBAL
     # =====================================================
 
     try:
         df_diario, df_semanal, df_periodo = procesar_global(
-            df_ventas, df_perf, df_aud, df_off,
-            df_dur90, df_dur30, df_ins, df_aband,
-            df_resc,
+            df_ventas, df_performance, df_auditorias,
+            df_offtime, df_dur90, df_dur30,
+            df_ins, df_aband, df_resc,
             date_from, date_to
         )
     except Exception as e:
@@ -168,10 +160,6 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         st.stop()
 
     st.success("✅ Consolidado generado con éxito")
-
-    # =====================================================
-    # 📊 MOSTRAR RESULTADOS
-    # =====================================================
 
     st.subheader("📅 Diario Consolidado")
     st.dataframe(df_diario, use_container_width=True)
@@ -183,7 +171,7 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     st.dataframe(df_periodo, use_container_width=True)
 
     # =====================================================
-    # 💾 DESCARGA DEL EXCEL
+    # 📥 DESCARGA
     # =====================================================
 
     output = BytesIO()
@@ -200,8 +188,7 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     )
 
 else:
-    st.info("Carga todos los archivos, selecciona un rango de fechas y presiona **Procesar Consolidado Global**.")
-
+    st.info("Carga todos los archivos, selecciona fechas y presiona **Procesar Consolidado Global**.")
 
 
 
