@@ -56,6 +56,7 @@ def process_performance(df):
     df = clean_cols(df)
 
     df = df.rename(columns={"% Firt": "firt_pct", "% Furt": "furt_pct"})
+
     df["fecha"] = pd.to_datetime(df["Fecha de Referencia"], errors="coerce").dt.normalize()
 
     df["Q_Ticket"] = 1
@@ -95,15 +96,20 @@ def process_auditorias(df):
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
     def to_date(x):
-        if pd.isna(x): return None
+        if pd.isna(x):
+            return None
         s = str(x).strip()
 
         for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
-            try: return pd.to_datetime(s, format=fmt).date()
-            except: pass
+            try:
+                return pd.to_datetime(s, format=fmt).date()
+            except:
+                pass
 
-        try: return pd.to_datetime(s).date()
-        except: return None
+        try:
+            return pd.to_datetime(s).date()
+        except:
+            return None
 
     df["fecha"] = df[col_fecha].apply(to_date)
     df = df[df["fecha"].notna()]
@@ -126,43 +132,59 @@ def process_auditorias(df):
 
 def process_offtime(df):
     df = clean_cols(df)
+
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["OFF_TIME"] = np.where(
-        df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)", 1, 0
+        df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)",
+        1, 0
     )
 
-    return df.groupby("fecha", as_index=False).agg({"OFF_TIME": "sum"})
+    diario = df.groupby("fecha", as_index=False).agg({
+        "OFF_TIME": "sum"
+    })
+
+    return diario
 
 
 # ============================================================
-# 🟥 PROCESAR DURACIÓN >90
+# 🟥 PROCESAR DURACIÓN > 90 MINUTOS
 # ============================================================
 
 def process_duracion(df):
     df = clean_cols(df)
+
     df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
 
     df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
 
-    return df.groupby("fecha", as_index=False).agg({"Duracion_90": "sum"})
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Duracion_90": "sum"
+    })
+
+    return diario
 
 
 # ============================================================
-# 🟫 PROCESAR DURACIÓN >30
+# 🟦 PROCESAR >30 MINUTOS
 # ============================================================
 
 def process_duracion30(df):
     df = clean_cols(df)
 
     df["fecha"] = pd.to_datetime(df["Day of tm_start_local_at"], errors="coerce").dt.normalize()
+
     df["Duracion_30"] = 1
 
-    return df.groupby("fecha", as_index=False).agg({"Duracion_30": "sum"})
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Duracion_30": "sum"
+    })
+
+    return diario
 
 
 # ============================================================
-# 🚗 PROCESAR INSPECCIONES VEHICULARES
+# 🟫 PROCESAR INSPECCIONES
 # ============================================================
 
 def process_inspecciones(df):
@@ -176,46 +198,36 @@ def process_inspecciones(df):
 
     df["Inspecciones_Q"] = 1
 
-    return df.groupby("fecha", as_index=False).agg({
+    diario = df.groupby("fecha", as_index=False).agg({
         "Inspecciones_Q": "sum",
         "Cumplimiento_Exterior": "mean",
         "Cumplimiento_Interior": "mean",
         "Cumplimiento_Conductor": "mean"
     })
 
-
-# ============================================================
-# 🟣 PROCESAR CLIENTES ABANDONADOS
-# ============================================================
-
-def process_abandonados(df):
-    df = clean_cols(df)
-
-    df["fecha"] = pd.to_datetime(df["Marca temporal"], errors="coerce").dt.normalize()
-    df["Abandonados"] = 1
-
-    return df.groupby("fecha", as_index=False).agg({"Abandonados": "sum"})
+    return diario
 
 
 # ============================================================
-# 🆕 🟦 PROCESAR RESCATES DO GENERAL
+# 🆘 PROCESAR RESCATES
 # ============================================================
 
 def process_rescates(df):
     df = clean_cols(df)
 
     # Filtrar solo rescates reales
-    df = df[df["User Email"].str.lower() == "emergencias.excellence.cl@cabify.com"]
+    df = df[df["User Email"].astype(str).str.lower().str.strip() ==
+            "emergencias.excellence.cl@cabify.com"]
 
-    df["fecha"] = pd.to_datetime(
-        df["Start At Local Dttm"],
-        format="%d-%m-%Y %H:%M",
-        errors="coerce"
-    ).dt.normalize()
+    df["fecha"] = pd.to_datetime(df["Start At Local Dttm"], errors="coerce").dt.normalize()
 
-    df["Rescates_Q"] = 1
+    df["Rescates"] = 1
 
-    return df.groupby("fecha", as_index=False).agg({"Rescates_Q": "sum"})
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Rescates": "sum"
+    })
+
+    return diario
 
 
 # ============================================================
@@ -235,12 +247,13 @@ def semana_humana(fecha):
 
 
 # ============================================================
-# 🔵 CONSOLIDADO GENERAL
+# 🔵 PROCESAR GLOBAL
 # ============================================================
 
 def procesar_global(
     df_ventas, df_perf, df_aud, df_off, df_dur, df_dur30,
-    df_insp, df_aband, df_resc, date_from, date_to
+    df_insp, df_aband, df_resc,
+    date_from, date_to
 ):
 
     v = process_ventas(df_ventas)
@@ -251,7 +264,7 @@ def procesar_global(
     d30 = process_duracion30(df_dur30)
     insp = process_inspecciones(df_insp)
     ab = process_abandonados(df_aband)
-    resc = process_rescates(df_resc)
+    r = process_rescates(df_resc)
 
     df = (
         v.merge(p, on="fecha", how="outer")
@@ -261,17 +274,17 @@ def procesar_global(
          .merge(d30, on="fecha", how="outer")
          .merge(insp, on="fecha", how="outer")
          .merge(ab, on="fecha", how="outer")
-         .merge(resc, on="fecha", how="outer")
+         .merge(r, on="fecha", how="outer")
     )
 
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
     sum_cols = [
-        "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
-        "Q_Auditorias","OFF_TIME","Duracion_90","Duracion_30",
-        "Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas",
-        "Inspecciones_Q","Abandonados","Rescates_Q"
+        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
+        "Inspecciones_Q", "Abandonados", "Rescates"
     ]
 
     for c in sum_cols:
@@ -279,9 +292,10 @@ def procesar_global(
             df[c] = df[c].fillna(0)
 
     mean_cols = [
-        "CSAT","NPS Score","Firt (h)","Furt (h)",
-        "firt_pct","furt_pct","Nota_Auditorias",
-        "Cumplimiento_Exterior","Cumplimiento_Interior","Cumplimiento_Conductor"
+        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
+        "firt_pct", "furt_pct", "Nota_Auditorias",
+        "Cumplimiento_Exterior", "Cumplimiento_Interior",
+        "Cumplimiento_Conductor"
     ]
 
     for c in mean_cols:
@@ -312,7 +326,6 @@ def procesar_global(
         if c in df_per.columns:
             df_per[c] = df_per[c].round(2)
 
-    # Aplicar formato final
     columnas_sin_decimales = sum_cols
 
     def aplicar_formato(df2):
@@ -328,4 +341,5 @@ def procesar_global(
     df_per = aplicar_formato(df_per)
 
     return df, df_sem, df_per
+
 
