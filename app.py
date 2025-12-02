@@ -1,192 +1,269 @@
-import streamlit as st
 import pandas as pd
-from io import StringIO
-from processor import procesar_global
+import numpy as np
 
-st.set_page_config(page_title="CLAIRPORT – Consolidado Global", layout="wide")
+# ============================================================
+# 🔧 LIMPIEZA DE COLUMNAS
+# ============================================================
 
-st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
+def clean_cols(df):
+    df.columns = (
+        df.columns.astype(str)
+        .str.replace("ï»¿", "", regex=False)
+        .str.replace("\ufeff", "", regex=False)
+        .str.strip()
+    )
+    return df
 
-# =====================================================
-# 📌 FUNCIONES DE LECTURA
-# =====================================================
+# ============================================================
+# 🟦 PROCESAR VENTAS
+# ============================================================
 
-def read_generic_csv(uploaded_file):
-    raw = uploaded_file.read()
-    uploaded_file.seek(0)
+def process_ventas(df):
+    df = clean_cols(df)
+    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
-    text = raw.decode("latin-1").replace("\ufeff", "").replace("ï»¿", "")
-    sep = ";" if text.count(";") > text.count(",") else ","
+    df["qt_price_local"] = (
+        df["qt_price_local"]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.replace("$", "", regex=False)
+    )
+    df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
 
-    return pd.read_csv(StringIO(text), sep=sep, engine="python")
+    df["Ventas_Totales"] = df["qt_price_local"]
+    df["Ventas_Compartidas"] = np.where(df["ds_product_name"] == "van_compartida",
+                                       df["qt_price_local"], 0)
+    df["Ventas_Exclusivas"] = np.where(df["ds_product_name"] == "van_exclusive",
+                                       df["qt_price_local"], 0)
 
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Ventas_Totales": "sum",
+        "Ventas_Compartidas": "sum",
+        "Ventas_Exclusivas": "sum",
+    })
 
-def read_auditorias_csv(uploaded_file):
-    raw = uploaded_file.read()
-    uploaded_file.seek(0)
+    return diario
 
-    text = raw.decode("latin-1").replace("\ufeff", "").replace("ï»¿", "")
-    return pd.read_csv(StringIO(text), sep=";", quotechar='"', engine="python")
+# ============================================================
+# 🟩 PROCESAR PERFORMANCE
+# ============================================================
 
+def process_performance(df):
+    df = clean_cols(df)
+    df = df.rename(columns={"% Firt": "firt_pct", "% Furt": "furt_pct"})
+    df["fecha"] = pd.to_datetime(df["Fecha de Referencia"], errors="coerce").dt.normalize()
 
-# =====================================================
-# 📥 SUBIDA DE ARCHIVOS
-# =====================================================
-
-st.header("📥 Cargar Archivos")
-
-ventas_file = st.file_uploader("🔵 Ventas (.csv/.xlsx)", type=["csv", "xlsx"])
-performance_file = st.file_uploader("🟢 Performance (.csv)", type=["csv"])
-auditorias_file = st.file_uploader("🟣 Auditorías (.csv)", type=["csv"])
-offtime_file = st.file_uploader("🟠 Off-Time (.csv)", type=["csv"])
-duracion_file = st.file_uploader("🔴 Duración >90 minutos (.csv)", type=["csv"])
-treinta_file = st.file_uploader("🟡 Viajes >30 minutos (.csv)", type=["csv"])
-inspecciones_file = st.file_uploader("🟤 Inspecciones de Vehículos (.xlsx/.csv)", type=["xlsx", "csv"])
-
-st.divider()
-
-# =====================================================
-# 📅 SELECTOR DE FECHAS
-# =====================================================
-
-st.header("📅 Seleccionar Rango de Fechas")
-
-col1, col2 = st.columns(2)
-with col1:
-    date_from = st.date_input("📆 Desde:", value=None, format="YYYY-MM-DD")
-with col2:
-    date_to = st.date_input("📆 Hasta:", value=None, format="YYYY-MM-DD")
-
-if not date_from or not date_to:
-    st.warning("Selecciona ambas fechas para poder procesar.")
-    st.stop()
-
-date_from = pd.to_datetime(date_from)
-date_to = pd.to_datetime(date_to)
-
-st.divider()
-
-# =====================================================
-# 🚀 PROCESAMIENTO
-# =====================================================
-
-if st.button("🚀 Procesar Consolidado", type="primary"):
-
-    # Validación
-    if not all([ventas_file, performance_file, auditorias_file, offtime_file, duracion_file, treinta_file, inspecciones_file]):
-        st.error("⚠ Debes cargar TODOS los archivos.")
-        st.stop()
-
-    # ---------------------------- VENTAS ------------------------
-    try:
-        if ventas_file.name.endswith(".csv"):
-            df_ventas = read_generic_csv(ventas_file)
-        else:
-            df_ventas = pd.read_excel(ventas_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Ventas: {e}")
-        st.stop()
-
-    # ------------------------- PERFORMANCE ----------------------
-    try:
-        df_performance = read_generic_csv(performance_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Performance: {e}")
-        st.stop()
-
-    # ------------------------ AUDITORÍAS ------------------------
-    try:
-        df_auditorias = read_auditorias_csv(auditorias_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Auditorías: {e}")
-        st.stop()
-
-    # ------------------------ OFF-TIME --------------------------
-    try:
-        df_offtime = read_generic_csv(offtime_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Off-Time: {e}")
-        st.stop()
-
-    # ------------------------ DURACIÓN >90 ----------------------
-    try:
-        df_duracion = read_generic_csv(duracion_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Duración >90: {e}")
-        st.stop()
-
-    # ------------------------ VIAJES >30 ------------------------
-    try:
-        df_30 = read_generic_csv(treinta_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Viajes >30 minutos: {e}")
-        st.stop()
-
-    # ----------------------- INSPECCIONES -----------------------
-    try:
-        if inspecciones_file.name.endswith(".csv"):
-            df_ins = read_generic_csv(inspecciones_file)
-        else:
-            df_ins = pd.read_excel(inspecciones_file)
-    except Exception as e:
-        st.error(f"❌ Error leyendo Inspecciones: {e}")
-        st.stop()
-
-    # ==========================================================
-    # 🔵 PROCESAR GLOBAL
-    # ==========================================================
-
-    try:
-        df_final, df_semanal, df_periodo = procesar_global(
-            df_ventas,
-            df_performance,
-            df_auditorias,
-            df_offtime,
-            df_duracion,
-            df_30,
-            df_ins,
-            date_from,
-            date_to
-        )
-    except Exception as e:
-        st.error(f"❌ Error al procesar datos: {e}")
-        st.stop()
-
-    # ==========================================================
-    # 📊 MOSTRAR RESULTADOS
-    # ==========================================================
-
-    st.success("✅ Procesado con éxito")
-
-    st.subheader("📅 Diario Consolidado")
-    st.dataframe(df_final, use_container_width=True)
-
-    st.subheader("📆 Semanal Consolidado")
-    st.dataframe(df_semanal, use_container_width=True)
-
-    st.subheader("📊 Consolidado del Periodo")
-    st.dataframe(df_periodo, use_container_width=True)
-
-    # ==========================================================
-    # 💾 DESCARGA EN EXCEL
-    # ==========================================================
-
-    import io
-    output = io.BytesIO()
-
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_final.to_excel(writer, index=False, sheet_name="Diario")
-        df_semanal.to_excel(writer, index=False, sheet_name="Semanal")
-        df_periodo.to_excel(writer, index=False, sheet_name="Periodo")
-
-    st.download_button(
-        "💾 Descargar Excel",
-        data=output.getvalue(),
-        file_name="Consolidado_Global.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    df["Q_Ticket"] = 1
+    df["Q_Tickets_Resueltos"] = np.where(df["Status"].str.lower() == "solved", 1, 0)
+    df["Q_Encuestas"] = np.where(
+        df["CSAT"].notna() | df["NPS Score"].notna(),
+        1, 0
     )
 
-else:
-    st.info("Sube todos los archivos y selecciona el rango de fechas para procesar.")
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Q_Encuestas": "sum",
+        "CSAT": "mean",
+        "NPS Score": "mean",
+        "Firt (h)": "mean",
+        "firt_pct": "mean",
+        "Furt (h)": "mean",
+        "furt_pct": "mean",
+        "Reopen": "sum",
+        "Q_Ticket": "sum",
+        "Q_Tickets_Resueltos": "sum"
+    })
+
+    return diario
+
+# ============================================================
+# 🟪 PROCESAR AUDITORÍAS (ROBUSTO)
+# ============================================================
+
+def process_auditorias(df):
+    df = clean_cols(df)
+
+    candidates = ["Date Time Reference", "Date Time", "ï»¿Date Time"]
+    col_fecha = next((c for c in candidates if c in df.columns), None)
+
+    if col_fecha is None:
+        return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
+
+    def to_date(x):
+        if pd.isna(x): return None
+        s = str(x).strip()
+        for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
+            try: return pd.to_datetime(s, format=fmt).date()
+            except: pass
+        try: return pd.to_datetime(s).date()
+        except: return None
+
+    df["fecha"] = df[col_fecha].apply(to_date)
+    df = df[df["fecha"].notna()]
+    df["fecha"] = pd.to_datetime(df["fecha"])
+
+    df["Q_Auditorias"] = 1
+    df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce")
+
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Q_Auditorias": "sum",
+        "Nota_Auditorias": "mean"
+    })
+
+    return diario
+
+# ============================================================
+# 🟧 PROCESAR OFF-TIME
+# ============================================================
+
+def process_offtime(df):
+    df = clean_cols(df)
+    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
+
+    df["OFF_TIME"] = np.where(
+        df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)",
+        1, 0
+    )
+
+    return df.groupby("fecha", as_index=False).agg({"OFF_TIME": "sum"})
+
+# ============================================================
+# 🟥 PROCESAR DURACIÓN >90 MINUTOS
+# ============================================================
+
+def process_duracion90(df):
+    df = clean_cols(df)
+    df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
+    df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
+
+    return df.groupby("fecha", as_index=False).agg({"Duracion_90": "sum"})
+
+# ============================================================
+# 🟧 PROCESAR DURACIÓN >30 MINUTOS
+# ============================================================
+
+def process_duracion30(df):
+    df = clean_cols(df)
+    df["fecha"] = pd.to_datetime(df["Day of tm_start_local_at"], errors="coerce").dt.normalize()
+    df["Duracion_30"] = 1
+    return df.groupby("fecha", as_index=False).agg({"Duracion_30": "sum"})
+
+# ============================================================
+# 🚗 PROCESAR INSPECCIONES
+# ============================================================
+
+def process_inspecciones(df):
+    df = clean_cols(df)
+    df["fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.normalize()
+
+    df["Q_Inspecciones"] = 1
+    df["Cumpl_Exterior"] = pd.to_numeric(df["Cumplimiento Exterior"], errors="coerce")
+    df["Cumpl_Interior"] = pd.to_numeric(df["Cumplimiento Interior"], errors="coerce")
+    df["Cumpl_Conductor"] = pd.to_numeric(df["Cumplimiento Conductor"], errors="coerce")
+
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Q_Inspecciones": "sum",
+        "Cumpl_Exterior": "mean",
+        "Cumpl_Interior": "mean",
+        "Cumpl_Conductor": "mean"
+    })
+
+    return diario
+
+# ============================================================
+# 🟣 PROCESAR CLIENTES ABANDONADOS
+# ============================================================
+
+def process_abandonados(df):
+    df = clean_cols(df)
+    df["fecha"] = pd.to_datetime(df["Marca temporal"], errors="coerce").dt.normalize()
+    df["Q_Abandonados"] = 1
+
+    return df.groupby("fecha", as_index=False).agg({"Q_Abandonados": "sum"})
+
+# ============================================================
+# 📅 SEMANA HUMANA
+# ============================================================
+
+def semana_humana(fecha):
+    lunes = fecha - pd.Timedelta(days=fecha.weekday())
+    domingo = lunes + pd.Timedelta(days=6)
+    meses = {
+        1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
+        7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
+    }
+    return f"{lunes.day}-{domingo.day} {meses[domingo.month]}"
+
+# ============================================================
+# 🔵 FUNCIÓN PRINCIPAL – GLOBAL
+# ============================================================
+
+def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur90, df_dur30,
+                    df_ins, df_aband, date_from, date_to):
+
+    v = process_ventas(df_ventas)
+    p = process_performance(df_perf)
+    a = process_auditorias(df_aud)
+    o = process_offtime(df_off)
+    d90 = process_duracion90(df_dur90)
+    d30 = process_duracion30(df_dur30)
+    ins = process_inspecciones(df_ins)
+    ab = process_abandonados(df_aband)
+
+    df = (
+        v.merge(p, on="fecha", how="outer")
+         .merge(a, on="fecha", how="outer")
+         .merge(o, on="fecha", how="outer")
+         .merge(d90, on="fecha", how="outer")
+         .merge(d30, on="fecha", how="outer")
+         .merge(ins, on="fecha", how="outer")
+         .merge(ab, on="fecha", how="outer")
+    )
+
+    df = df.sort_values("fecha")
+    df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
+
+    # SUMA
+    sum_cols = [
+        "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
+        "Q_Auditorias","OFF_TIME","Duracion_90","Duracion_30",
+        "Q_Inspecciones","Q_Abandonados",
+        "Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"
+    ]
+    for c in sum_cols:
+        if c in df.columns: df[c] = df[c].fillna(0)
+
+    # PROMEDIOS
+    mean_cols = [
+        "CSAT","NPS Score","Firt (h)","Furt (h)",
+        "firt_pct","furt_pct","Nota_Auditorias",
+        "Cumpl_Exterior","Cumpl_Interior","Cumpl_Conductor"
+    ]
+    for c in mean_cols:
+        if c in df.columns: df[c] = df[c].replace({0: np.nan})
+
+    # SEMANAL
+    df_sem = df.copy()
+    df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
+
+    agg_dict = {c: "sum" for c in sum_cols}
+    agg_dict.update({c: "mean" for c in mean_cols})
+
+    df_sem = df_sem.groupby("Semana", as_index=False).agg(agg_dict)
+
+    for c in mean_cols:
+        if c in df_sem.columns:
+            df_sem[c] = df_sem[c].round(2)
+
+    # PERIODO
+    df_per = df.copy()
+    df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
+    df_per = df_per.groupby("Periodo", as_index=False).agg(agg_dict)
+
+    for c in mean_cols:
+        if c in df_per.columns:
+            df_per[c] = df_per[c].round(2)
+
+    return df, df_sem, df_per
 
 
