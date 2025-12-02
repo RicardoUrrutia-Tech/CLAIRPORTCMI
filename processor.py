@@ -26,6 +26,7 @@ def process_ventas(df):
         .str.replace(" ", "", regex=False)
         .str.replace("$", "", regex=False)
     )
+
     df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
 
     df["Ventas_Totales"] = df["qt_price_local"]
@@ -74,13 +75,13 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS (MEJORADO)
+# 🟪 PROCESAR AUDITORÍAS (ROBUSTO)
 # ============================================================
 
 def process_auditorias(df):
     df = clean_cols(df)
 
-    # Buscar columna correcta de fecha
+    # Buscar la columna válida de fecha
     col_fecha = None
     for c in ["Date Time Reference", "Date Time", "ï»¿Date Time"]:
         if c in df.columns:
@@ -92,31 +93,38 @@ def process_auditorias(df):
 
     # Parser robusto
     def to_date(x):
-        if pd.isna(x):
-            return None
+        if pd.isna(x): return None
         s = str(x).strip()
 
-        for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
-            try:
-                return pd.to_datetime(s, format=fmt).date()
-            except:
-                pass
+        # YYYY/MM/DD
+        if "/" in s and len(s.split("/")[0]) == 4:
+            try: return pd.to_datetime(s, format="%Y/%m/%d").date()
+            except: pass
 
-        try:
-            return pd.to_datetime(s).date()
-        except:
-            return None
+        # DD-MM-YYYY
+        if "-" in s and len(s.split("-")[2]) == 4:
+            try: return pd.to_datetime(s, format="%d-%m-%Y").date()
+            except: pass
+
+        # MM/DD/YYYY
+        if "/" in s and len(s.split("/")[2]) == 4:
+            try: return pd.to_datetime(s, format="%m/%d/%Y").date()
+            except: pass
+
+        # Fallback
+        try: return pd.to_datetime(s).date()
+        except: return None
 
     df["fecha"] = df[col_fecha].apply(to_date)
     df = df[df["fecha"].notna()]
-    df["fecha"] = pd.to_datetime(df["fecha"])
+    df["fecha"] = pd.to_datetime(df["fecha"])  # pasar a datetime oficial
 
     df["Q_Auditorias"] = 1
-    df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce")
+    df["Nota_Auditorias"] = pd.to_numeric(df["Total Audit Score"], errors="coerce").round(2)
 
     diario = df.groupby("fecha", as_index=False).agg({
         "Q_Auditorias": "sum",
-        "Nota_Auditorias": "mean"   # ← PROMEDIO OK
+        "Nota_Auditorias": "mean"
     })
 
     diario["Nota_Auditorias"] = diario["Nota_Auditorias"].round(2)
@@ -147,13 +155,14 @@ def process_offtime(df):
 
 
 # ============================================================
-# 🟥 PROCESAR DURACIÓN > 90 MIN
+# 🟥 PROCESAR DURACIÓN > 90 MINUTOS
 # ============================================================
 
 def process_duracion(df):
     df = clean_cols(df)
 
     df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
+
     df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -164,26 +173,26 @@ def process_duracion(df):
 
 
 # ============================================================
-# 🟨 PROCESAR ESPERA > 30 MIN EN LOSA
+# 🟫 PROCESAR > 30 MIN EN LOSA  (nuevo)
 # ============================================================
 
-def process_30min(df):
+def process_losa30(df):
     df = clean_cols(df)
 
     # La fecha viene en “Day of tm_start_local_at”
     df["fecha"] = pd.to_datetime(df["Day of tm_start_local_at"], errors="coerce").dt.normalize()
 
-    df["Losa_30min"] = 1  # Cada fila ya corresponde a >30 min
+    df["Losa_30"] = 1  # todos ya están filtrados
 
     diario = df.groupby("fecha", as_index=False).agg({
-        "Losa_30min": "sum"
+        "Losa_30": "sum"
     })
 
     return diario
 
 
 # ============================================================
-# 📅 FORMATO DE SEMANA HUMANA
+# 📅 SEMANA HUMANA
 # ============================================================
 
 def semana_humana(fecha):
@@ -194,84 +203,79 @@ def semana_humana(fecha):
         1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
         7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
     }
-
     return f"{lunes.day}-{domingo.day} {meses[domingo.month]}"
 
 
 # ============================================================
-# 🔵 PROCESAR GLOBAL (ACTUALIZADO CON df_30m)
+# 🔵 PROCESAR GLOBAL FINAL
 # ============================================================
 
-def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, df_30m, date_from, date_to):
+def procesar_global(df_ventas, df_perf, df_aud, df_off, df_dur, df_losa, date_from, date_to):
 
     v = process_ventas(df_ventas)
     p = process_performance(df_perf)
     a = process_auditorias(df_aud)
     o = process_offtime(df_off)
     d = process_duracion(df_dur)
-    t30 = process_30min(df_30m)
+    l = process_losa30(df_losa)
 
-    # Merge final
+    # Merge
     df = (
         v.merge(p, on="fecha", how="outer")
          .merge(a, on="fecha", how="outer")
          .merge(o, on="fecha", how="outer")
          .merge(d, on="fecha", how="outer")
-         .merge(t30, on="fecha", how="outer")
+         .merge(l, on="fecha", how="outer")
     )
 
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    # Columnas de cantidad
+    # Columnas de suma
     q_cols = [
-        "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
-        "Q_Auditorias","OFF_TIME","Duracion_90","Losa_30min",
-        "Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"
+        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Auditorias", "OFF_TIME", "Duracion_90", "Losa_30",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
     ]
 
     for c in q_cols:
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    # Promedios → convertir 0 a “–”
-    avg_cols = [
-        "CSAT","NPS Score","Firt (h)","Furt (h)",
-        "firt_pct","furt_pct","Nota_Auditorias"
-    ]
+    # Asegurar numeric para auditorías
+    if "Nota_Auditorias" in df.columns:
+        df["Nota_Auditorias"] = pd.to_numeric(df["Nota_Auditorias"], errors="coerce")
 
-    for c in avg_cols:
-        if c in df.columns:
-            df[c] = df[c].replace({0: np.nan}).fillna("–")
+    # Columns para promedios
+    avg_cols = ["Nota_Auditorias"]
 
     # ============================================================
-    # 📅 RESUMEN SEMANAL
+    # 📆 RESUMEN SEMANAL
     # ============================================================
 
     df_sem = df.copy()
     df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
 
     numeric_cols = df_sem.select_dtypes(include=["number"]).columns.tolist()
-    avg_cols_sem = ["Nota_Auditorias"]
 
     df_sem_sum = df_sem.groupby("Semana")[numeric_cols].sum()
+    df_sem_avg = df_sem.groupby("Semana")[avg_cols].mean().round(2)
 
-    df_sem_avg = df_sem.groupby("Semana")[avg_cols_sem].mean().round(2)
-
-    df_sem = df_sem_sum.join(df_sem_avg).reset_index()
+    df_sem = df_sem_sum.join(df_sem_avg, how="left").reset_index()
 
     # ============================================================
-    # 📅 RESUMEN PERIODO
+    # 🟧 RESUMEN DEL PERIODO
     # ============================================================
 
     df_per = df.copy()
     df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
 
     df_per_sum = df_per.groupby("Periodo")[numeric_cols].sum()
-    df_per_avg = df_per.groupby("Periodo")[avg_cols_sem].mean().round(2)
+    df_per_avg = df_per.groupby("Periodo")[avg_cols].mean().round(2)
 
-    df_per = df_per_sum.join(df_per_avg).reset_index()
+    df_per = df_per_sum.join(df_per_avg, how="left").reset_index()
 
     return df, df_sem, df_per
+
 
 
