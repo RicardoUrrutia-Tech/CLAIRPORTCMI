@@ -14,6 +14,7 @@ def clean_cols(df):
     )
     return df
 
+
 # ============================================================
 # 🟦 PROCESAR VENTAS
 # ============================================================
@@ -24,7 +25,8 @@ def process_ventas(df):
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["qt_price_local"] = (
-        df["qt_price_local"].astype(str)
+        df["qt_price_local"]
+        .astype(str)
         .str.replace(",", "", regex=False)
         .str.replace(" ", "", regex=False)
         .str.replace("$", "", regex=False)
@@ -32,8 +34,10 @@ def process_ventas(df):
     df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
 
     df["Ventas_Totales"] = df["qt_price_local"]
-    df["Ventas_Compartidas"] = np.where(df["ds_product_name"] == "van_compartida", df["qt_price_local"], 0)
-    df["Ventas_Exclusivas"] = np.where(df["ds_product_name"] == "van_exclusive", df["qt_price_local"], 0)
+    df["Ventas_Compartidas"] = np.where(df["ds_product_name"] == "van_compartida",
+                                        df["qt_price_local"], 0)
+    df["Ventas_Exclusivas"] = np.where(df["ds_product_name"] == "van_exclusive",
+                                       df["qt_price_local"], 0)
 
     diario = df.groupby("fecha", as_index=False).agg({
         "Ventas_Totales": "sum",
@@ -42,6 +46,7 @@ def process_ventas(df):
     })
 
     return diario
+
 
 # ============================================================
 # 🟩 PROCESAR PERFORMANCE
@@ -56,7 +61,10 @@ def process_performance(df):
 
     df["Q_Ticket"] = 1
     df["Q_Tickets_Resueltos"] = np.where(df["Status"].str.lower() == "solved", 1, 0)
-    df["Q_Encuestas"] = np.where(df["CSAT"].notna() | df["NPS Score"].notna(), 1, 0)
+
+    df["Q_Encuestas"] = np.where(
+        df["CSAT"].notna() | df["NPS Score"].notna(), 1, 0
+    )
 
     diario = df.groupby("fecha", as_index=False).agg({
         "Q_Encuestas": "sum",
@@ -73,8 +81,9 @@ def process_performance(df):
 
     return diario
 
+
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS
+# 🟪 PROCESAR AUDITORÍAS (ROBUSTO)
 # ============================================================
 
 def process_auditorias(df):
@@ -87,15 +96,20 @@ def process_auditorias(df):
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
     def to_date(x):
-        if pd.isna(x): return None
+        if pd.isna(x): 
+            return None
         s = str(x).strip()
 
         for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
-            try: return pd.to_datetime(s, format=fmt).date()
-            except: pass
+            try:
+                return pd.to_datetime(s, format=fmt).date()
+            except:
+                pass
 
-        try: return pd.to_datetime(s).date()
-        except: return None
+        try:
+            return pd.to_datetime(s).date()
+        except:
+            return None
 
     df["fecha"] = df[col_fecha].apply(to_date)
     df = df[df["fecha"].notna()]
@@ -111,18 +125,19 @@ def process_auditorias(df):
 
     return diario
 
+
 # ============================================================
 # 🟧 PROCESAR OFF-TIME
 # ============================================================
 
 def process_offtime(df):
     df = clean_cols(df)
+
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
 
     df["OFF_TIME"] = np.where(
         df["Segment Arrived to Airport vs Requested"] != "02. A tiempo (0-20 min antes)",
-        1,
-        0
+        1, 0
     )
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -131,30 +146,45 @@ def process_offtime(df):
 
     return diario
 
+
 # ============================================================
-# 🟥 PROCESAR DURACIÓN > 90 MIN
+# 🟥 PROCESAR DURACIÓN > 90 MINUTOS
 # ============================================================
 
-def process_duracion_90(df):
+def process_duracion(df):
     df = clean_cols(df)
+
     df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
 
     df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
 
-    return df.groupby("fecha", as_index=False).agg({"Duracion_90": "sum"})
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Duracion_90": "sum"
+    })
+
+    return diario
+
 
 # ============================================================
-# 🟧 PROCESAR DURACIÓN > 30 MIN (nuevo)
+# 🟦 PROCESAR DURACIÓN > 30 MINUTOS
 # ============================================================
 
-def process_duracion_30(df):
+def process_duracion30(df):
     df = clean_cols(df)
+
     df["fecha"] = pd.to_datetime(df["Day of tm_start_local_at"], errors="coerce").dt.normalize()
-    df["Duracion_30"] = 1
-    return df.groupby("fecha", as_index=False).agg({"Duracion_30": "sum"})
+
+    df["Duracion_30"] = 1  # ya están filtrados
+
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Duracion_30": "sum"
+    })
+
+    return diario
+
 
 # ============================================================
-# 🚗 PROCESAR INSPECCIONES VEHICULARES
+# 🟫 PROCESAR INSPECCIONES
 # ============================================================
 
 def process_inspecciones(df):
@@ -162,29 +192,39 @@ def process_inspecciones(df):
 
     df["fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.normalize()
 
-    df["Q_Inspecciones"] = 1
-    df["Cumpl_Exterior"] = pd.to_numeric(df["Cumplimiento Exterior"], errors="coerce")
-    df["Cumpl_Interior"] = pd.to_numeric(df["Cumplimiento Interior"], errors="coerce")
-    df["Cumpl_Conductor"] = pd.to_numeric(df["Cumplimiento Conductor"], errors="coerce")
+    df["Cumplimiento_Exterior"] = pd.to_numeric(df["Cumplimiento Exterior"], errors="coerce")
+    df["Cumplimiento_Interior"] = pd.to_numeric(df["Cumplimiento Interior"], errors="coerce")
+    df["Cumplimiento_Conductor"] = pd.to_numeric(df["Cumplimiento Conductor"], errors="coerce")
 
-    return df.groupby("fecha", as_index=False).agg({
-        "Q_Inspecciones": "sum",
-        "Cumpl_Exterior": "mean",
-        "Cumpl_Interior": "mean",
-        "Cumpl_Conductor": "mean"
+    df["Inspecciones_Q"] = 1
+
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Inspecciones_Q": "sum",
+        "Cumplimiento_Exterior": "mean",
+        "Cumplimiento_Interior": "mean",
+        "Cumplimiento_Conductor": "mean"
     })
 
+    return diario
+
+
 # ============================================================
-# 👥 PROCESAR CLIENTES ABANDONADOS
+# ⬛ PROCESAR CLIENTES ABANDONADOS (EXCEL)
 # ============================================================
 
 def process_abandonados(df):
     df = clean_cols(df)
 
     df["fecha"] = pd.to_datetime(df["Marca temporal"], errors="coerce").dt.normalize()
-    df["Q_Abandonados"] = 1
 
-    return df.groupby("fecha", as_index=False).agg({"Q_Abandonados": "sum"})
+    df["Abandonados"] = 1
+
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Abandonados": "sum"
+    })
+
+    return diario
+
 
 # ============================================================
 # 📅 SEMANA HUMANA
@@ -193,87 +233,120 @@ def process_abandonados(df):
 def semana_humana(fecha):
     lunes = fecha - pd.Timedelta(days=fecha.weekday())
     domingo = lunes + pd.Timedelta(days=6)
+
     meses = {
         1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
         7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
     }
+
     return f"{lunes.day}-{domingo.day} {meses[domingo.month]}"
 
+
 # ============================================================
-# 🔵 PROCESAR GLOBAL – DIARIO + SEMANAL + PERÍODO
+# 🔵 PROCESAR GLOBAL – DIARIO + SEMANAL + PERIODO
 # ============================================================
 
 def procesar_global(
-    df_ventas, df_perf, df_aud,
-    df_off, df_dur90, df_dur30,
-    df_ins, df_aband,
-    date_from, date_to):
+    df_ventas, df_perf, df_aud, df_off, df_dur, df_dur30,
+    df_insp, df_aband, date_from, date_to
+):
 
     v = process_ventas(df_ventas)
     p = process_performance(df_perf)
     a = process_auditorias(df_aud)
     o = process_offtime(df_off)
-    d90 = process_duracion_90(df_dur90)
-    d30 = process_duracion_30(df_dur30)
-    ins = process_inspecciones(df_ins)
+    d = process_duracion(df_dur)
+    d30 = process_duracion30(df_dur30)
+    insp = process_inspecciones(df_insp)
     ab = process_abandonados(df_aband)
 
+    # Merge completo
     df = (
         v.merge(p, on="fecha", how="outer")
          .merge(a, on="fecha", how="outer")
          .merge(o, on="fecha", how="outer")
-         .merge(d90, on="fecha", how="outer")
+         .merge(d, on="fecha", how="outer")
          .merge(d30, on="fecha", how="outer")
-         .merge(ins, on="fecha", how="outer")
+         .merge(insp, on="fecha", how="outer")
          .merge(ab, on="fecha", how="outer")
     )
 
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
+    # SUMAS (sin decimales)
     sum_cols = [
-        "Q_Encuestas","Reopen","Q_Ticket","Q_Tickets_Resueltos",
-        "Q_Auditorias","OFF_TIME","Duracion_90","Duracion_30",
-        "Q_Inspecciones","Q_Abandonados",
-        "Ventas_Totales","Ventas_Compartidas","Ventas_Exclusivas"
+        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
+        "Inspecciones_Q", "Abandonados"
     ]
 
     for c in sum_cols:
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
+    # PROMEDIOS (2 decimales)
     mean_cols = [
-        "CSAT","NPS Score","Firt (h)","Furt (h)",
-        "firt_pct","furt_pct","Nota_Auditorias",
-        "Cumpl_Exterior","Cumpl_Interior","Cumpl_Conductor"
+        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
+        "firt_pct", "furt_pct", "Nota_Auditorias",
+        "Cumplimiento_Exterior", "Cumplimiento_Interior",
+        "Cumplimiento_Conductor"
     ]
 
     for c in mean_cols:
         if c in df.columns:
             df[c] = df[c].replace({0: np.nan})
 
-    # =============== SEMANAL ===============
+    # ============================================================
+    # 📅 SEMANAL
+    # ============================================================
+
     df_sem = df.copy()
     df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
 
-    agg = {c: "sum" for c in sum_cols}
-    agg.update({c: "mean" for c in mean_cols if c in df_sem.columns})
+    agg_dict = {c: "sum" for c in sum_cols}
+    agg_dict.update({c: "mean" for c in mean_cols})
 
-    df_sem = df_sem.groupby("Semana", as_index=False).agg(agg)
+    df_sem = df_sem.groupby("Semana", as_index=False).agg(agg_dict)
 
     for c in mean_cols:
         if c in df_sem.columns:
             df_sem[c] = df_sem[c].round(2)
 
-    # =============== PERÍODO ===============
+    # ============================================================
+    # 📅 CONSOLIDADO DEL PERIODO
+    # ============================================================
+
     df_per = df.copy()
     df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
 
-    df_per = df_per.groupby("Periodo", as_index=False).agg(agg)
+    agg_dict_periodo = {c: "sum" for c in sum_cols}
+    agg_dict_periodo.update({c: "mean" for c in mean_cols})
+
+    df_per = df_per.groupby("Periodo", as_index=False).agg(agg_dict_periodo)
 
     for c in mean_cols:
         if c in df_per.columns:
             df_per[c] = df_per[c].round(2)
+
+    # ============================================================
+    # 🌟 FORMATO FINAL DE DECIMALES
+    # ============================================================
+
+    columnas_sin_decimales = sum_cols
+
+    def aplicar_formato(df2):
+        for col in df2.select_dtypes(include=["float", "int"]).columns:
+            if col in columnas_sin_decimales:
+                df2[col] = df2[col].fillna(0).astype(int)
+            else:
+                df2[col] = df2[col].round(2)
+        return df2
+
+    df = aplicar_formato(df)
+    df_sem = aplicar_formato(df_sem)
+    df_per = aplicar_formato(df_per)
 
     return df, df_sem, df_per
 
