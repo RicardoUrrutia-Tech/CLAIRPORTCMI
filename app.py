@@ -11,21 +11,17 @@ st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
 # =====================================================
 
 def read_generic_csv(uploaded_file):
-    """Lee CSV con autodetección de ; o , y elimina BOM."""
     raw = uploaded_file.read()
     uploaded_file.seek(0)
     text = raw.decode("latin-1").replace("ï»¿", "").replace("\ufeff", "")
     sep = ";" if text.count(";") > text.count(",") else ","
     return pd.read_csv(StringIO(text), sep=sep, engine="python")
 
-
 def read_auditorias_csv(uploaded_file):
-    """Lectura específica para auditorías, siempre con ;"""
     raw = uploaded_file.read()
     uploaded_file.seek(0)
     text = raw.decode("latin-1").replace("ï»¿", "").replace("\ufeff", "")
     return pd.read_csv(StringIO(text), sep=";", engine="python")
-
 
 # =====================================================
 # 📥 CARGA DE ARCHIVOS
@@ -45,7 +41,7 @@ with col2:
     duracion90_file = st.file_uploader("🔴 Duración >90 min (.csv)", type=["csv"])
     duracion30_file = st.file_uploader("🟤 Duración >30 min (.csv)", type=["csv"])
     inspecciones_file = st.file_uploader("🚗 Inspecciones Vehiculares (.xlsx)", type=["xlsx"])
-    abandonados_file = st.file_uploader("🟣 Clientes Abandonados (.csv)", type=["csv"])
+    abandonados_file = st.file_uploader("🟣 Clientes Abandonados (.xlsx)", type=["xlsx"])
 
 st.divider()
 
@@ -76,7 +72,6 @@ st.divider()
 
 if st.button("🚀 Procesar Consolidado Global", type="primary"):
 
-    # Validación de archivos
     required = [
         ventas_file, performance_file, auditorias_file, offtime_file,
         duracion90_file, duracion30_file, inspecciones_file, abandonados_file
@@ -136,9 +131,9 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         st.stop()
 
     try:
-        df_aband = read_generic_csv(abandonados_file)
+        df_aband = pd.read_excel(abandonados_file)
     except Exception as e:
-        st.error(f"❌ Error leyendo Clientes Abandonados: {e}")
+        st.error(f"❌ Error leyendo Clientes Abandonados (Excel): {e}")
         st.stop()
 
     # =====================================================
@@ -147,26 +142,16 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
 
     try:
         df_diario, df_semanal, df_periodo = procesar_global(
-            df_ventas,
-            df_performance,
-            df_auditorias,
-            df_offtime,
-            df_dur90,
-            df_dur30,
-            df_ins,
-            df_aband,
-            date_from,
-            date_to
+            df_ventas, df_performance, df_auditorias,
+            df_offtime, df_dur90, df_dur30,
+            df_ins, df_aband,
+            date_from, date_to
         )
     except Exception as e:
         st.error(f"❌ Error procesando datos: {e}")
         st.stop()
 
     st.success("✅ Consolidado generado con éxito")
-
-    # =====================================================
-    # 📊 MOSTRAR DATAFRAMES
-    # =====================================================
 
     st.subheader("📅 Diario Consolidado")
     st.dataframe(df_diario, use_container_width=True)
@@ -178,7 +163,7 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     st.dataframe(df_periodo, use_container_width=True)
 
     # =====================================================
-    # 📥 DESCARGA EXCEL
+    # 📥 DESCARGA
     # =====================================================
 
     output = BytesIO()
@@ -188,14 +173,14 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         df_periodo.to_excel(writer, index=False, sheet_name="Periodo")
 
     st.download_button(
-        "💾 Descargar Consolidado en Excel",
+        "💾 Descargar Consolidado Global",
         data=output.getvalue(),
         file_name="Consolidado_Global.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 else:
-    st.info("Carga todos los archivos, selecciona las fechas y presiona **Procesar Consolidado Global**.")
+    st.info("Carga todos los archivos, selecciona fechas y presiona **Procesar Consolidado Global**.")
 
 
 
