@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import StringIO, BytesIO
-from processor import procesar_global, build_transposed_view
+from processor import procesar_global
 
 st.set_page_config(page_title="CLAIRPORT – Consolidado Global", layout="wide")
 st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
@@ -182,7 +182,7 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     st.dataframe(df_transpuesta, use_container_width=True)
 
     # =====================================================
-    # 📥 DESCARGA
+    # 📥 DESCARGA (con estilo Cabify en semanas)
     # =====================================================
 
     output = BytesIO()
@@ -191,6 +191,21 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         df_semanal.to_excel(writer, index=False, sheet_name="Semanal")
         df_periodo.to_excel(writer, index=False, sheet_name="Periodo")
         df_transpuesta.to_excel(writer, index=False, sheet_name="Vista_Traspuesta")
+
+        # 🎨 Estilo Cabify (moradul) para columnas de Semana en Vista_Traspuesta
+        workbook = writer.book
+        ws = writer.sheets["Vista_Traspuesta"]
+
+        week_format = workbook.add_format({
+            "bg_color": "#4A2B8D",   # Morado Cabify
+            "font_color": "#FFFFFF",
+            "bold": True
+        })
+
+        # Buscar columnas cuyo encabezado comience con "Semana "
+        for col_idx, col_name in enumerate(df_transpuesta.columns):
+            if isinstance(col_name, str) and col_name.startswith("Semana "):
+                ws.set_column(col_idx, col_idx, 20, week_format)
 
     st.download_button(
         "💾 Descargar Consolidado Global",
