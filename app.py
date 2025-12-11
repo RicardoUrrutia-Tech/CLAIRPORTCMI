@@ -69,4 +69,3 @@ st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
     )
 
 
-
