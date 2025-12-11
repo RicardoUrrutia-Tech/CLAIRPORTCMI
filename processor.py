@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from datetime import datetime, timedelta
 
 # ============================================================
 # 🔧 LIMPIEZA DE COLUMNAS
@@ -92,7 +93,7 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS (ROBUSTO)
+# 🟪 PROCESAR AUDITORÍAS (MISMA LÓGICA QUE POR AGENTE)
 # ============================================================
 
 def process_auditorias(df):
@@ -105,20 +106,39 @@ def process_auditorias(df):
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
     def to_date(x):
+        """Interpreta SIEMPRE en formato día/mes/año, como en el cuadro por agente."""
         if pd.isna(x):
             return None
-        s = str(x).strip()
 
-        for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
+        # Serial Excel
+        if isinstance(x, (int, float)):
             try:
-                return pd.to_datetime(s, format=fmt).date()
+                if x > 30000:
+                    return (datetime(1899, 12, 30) + timedelta(days=float(x))).date()
             except:
                 pass
 
-        try:
-            return pd.to_datetime(s).date()
-        except:
-            return None
+        s = str(x).strip()
+
+        # Formatos explícitos día/mes/año
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except:
+                pass
+
+        # Split manual por / o -
+        sep = "/" if "/" in s else ("-" if "-" in s else None)
+        if sep:
+            parts = s.split(sep)
+            if len(parts) == 3:
+                d, m, y = parts
+                try:
+                    return datetime(int(y), int(m), int(d)).date()
+                except:
+                    pass
+
+        return None
 
     df["fecha"] = df[col_fecha].apply(to_date)
     df = df[df["fecha"].notna()]
@@ -193,7 +213,7 @@ def process_duracion30(df):
 
 
 # ============================================================
-# 🟫 PROCESAR INSPECCIONES (CUMPLE/INCUMPLE)
+# 🟫 PROCESAR INSPECCIONES (SOLO CONTEOS CUMP/INCUMP)
 # ============================================================
 
 def process_inspecciones(df):
@@ -223,11 +243,9 @@ def process_inspecciones(df):
         (df["Cumplimiento_Conductor"] < 100) & df["Cumplimiento_Conductor"].notna()
     ).astype(int)
 
+    # 🔥 Solo conteos, sin % de cumplimiento
     diario = df.groupby("fecha", as_index=False).agg({
         "Inspecciones_Q": "sum",
-        "Cumplimiento_Exterior": "mean",
-        "Cumplimiento_Interior": "mean",
-        "Cumplimiento_Conductor": "mean",
         "Cump_Exterior": "sum",
         "Incump_Exterior": "sum",
         "Cump_Interior": "sum",
@@ -258,7 +276,7 @@ def process_abandonados(df):
 
 
 # ============================================================
-# 🚑 PROCESAR RESCATES (NUEVO)
+# 🚑 PROCESAR RESCATES
 # ============================================================
 
 def process_rescates(df):
@@ -330,7 +348,7 @@ def semana_humana(fecha):
 
 
 # ============================================================
-# 🔵 PROCESAR GLOBAL – DIARIO + SEMANAL + PERIODO
+# 🔵 PROCESAR GLOBAL – DIARIO + SEMANAL + PERIODO + TRASPUESTA
 # ============================================================
 
 def procesar_global(
@@ -365,18 +383,18 @@ def procesar_global(
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
-    # Si no hay WA o Q_Ticket, crear columnas para evitar errores
+    # Asegurar columnas de WA y Tickets
     if "Q_Tickets_WA" not in df.columns:
         df["Q_Tickets_WA"] = 0
     if "Q_Ticket" not in df.columns:
         df["Q_Ticket"] = 0
 
-    # ✅ Tickets no WA = total tickets Performance - tickets WA
-    df["Q_Tickets_No_WA"] = df["Q_Ticket"].fillna(0) - df["Q_Tickets_WA"].fillna(0)
+    # ❌ Eliminamos Q_Tickets_No_WA (pedido)
+    # Tickets y Tickets WA se tratan de forma independiente
 
     sum_cols = [
         "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
-        "Q_Tickets_WA", "Q_Tickets_No_WA",
+        "Q_Tickets_WA",
         "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
         "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
         "Inspecciones_Q", "Abandonados", "Rescates",
@@ -392,8 +410,7 @@ def procesar_global(
     mean_cols = [
         "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
         "firt_pct", "furt_pct", "Nota_Auditorias",
-        "Cumplimiento_Exterior", "Cumplimiento_Interior",
-        "Cumplimiento_Conductor"
+        # Eliminados: Cumplimiento_* (solo conteos ahora)
     ]
 
     for c in mean_cols:
@@ -439,20 +456,19 @@ def procesar_global(
     df_per = aplicar_formato(df_per)
 
     # 📐 Construir vista traspuesta
-    df_transpuesta = build_transposed_view(df)
+    df_transpuesta = build_transposed_view(df, sum_cols, mean_cols)
 
     return df, df_sem, df_per, df_transpuesta
 
 
 # ============================================================
-# 📐 VISTA TRASPUESTA (KPIs como filas, días/semana como columnas)
+# 📐 VISTA TRASPUESTA (agrupada por tipo de KPI)
 # ============================================================
 
-def build_transposed_view(df_diario):
+def build_transposed_view(df_diario, sum_cols, mean_cols):
     """
-    Construye una vista traspuesta donde:
-    - Filas = KPIs
-    - Columnas = días (dd/MM/YYYY) y, al final de cada semana, una columna de resumen:
+    - Filas = KPIs (agrupados por tipo con filas cabecera)
+    - Columnas = días (dd/MM/YYYY) y, al final de cada semana, una columna resumen:
       'Semana 01 al 07 de Diciembre 2025'
     """
     if df_diario is None or df_diario.empty:
@@ -462,25 +478,7 @@ def build_transposed_view(df_diario):
     df["fecha"] = pd.to_datetime(df["fecha"])
     df = df.sort_values("fecha")
 
-    # Columnas consideradas como sumatorias / promedios (replicamos criterio)
-    sum_cols = [
-        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
-        "Q_Tickets_WA", "Q_Tickets_No_WA",
-        "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
-        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
-        "Inspecciones_Q", "Abandonados", "Rescates",
-        "Cump_Exterior", "Incump_Exterior",
-        "Cump_Interior", "Incump_Interior",
-        "Cump_Conductor", "Incump_Conductor",
-    ]
-    mean_cols = [
-        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
-        "firt_pct", "furt_pct", "Nota_Auditorias",
-        "Cumplimiento_Exterior", "Cumplimiento_Interior",
-        "Cumplimiento_Conductor"
-    ]
-
-    # KPI list = todas las columnas excepto fecha
+    # Lista de KPIs (todas las columnas excepto fecha)
     kpis = [c for c in df.columns if c != "fecha"]
     if not kpis:
         return pd.DataFrame()
@@ -489,7 +487,7 @@ def build_transposed_view(df_diario):
     df["week_start"] = df["fecha"] - pd.to_timedelta(df["fecha"].dt.weekday, unit="D")
     weeks = sorted(df["week_start"].unique())
 
-    # DF resultado: filas = KPIs, columnas se irán añadiendo
+    # DF resultado inicial: filas = KPIs, columnas se irán añadiendo
     result = pd.DataFrame(index=kpis)
 
     meses = {
@@ -497,6 +495,7 @@ def build_transposed_view(df_diario):
         7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
     }
 
+    # Construir columnas de días + semanas
     for week_start in weeks:
         mask_week = df["week_start"] == week_start
         df_week = df[mask_week]
@@ -518,7 +517,10 @@ def build_transposed_view(df_diario):
             week_start_dt = pd.to_datetime(week_start)
             week_end_dt = max(fechas_week)
 
-            semana_label = f"Semana {week_start_dt.day:02d} al {week_end_dt.day:02d} {meses[week_end_dt.month]} {week_end_dt.year}"
+            semana_label = (
+                f"Semana {week_start_dt.day:02d} al "
+                f"{week_end_dt.day:02d} {meses[week_end_dt.month]} {week_end_dt.year}"
+            )
 
             vals = []
             for k in kpis:
@@ -531,7 +533,55 @@ def build_transposed_view(df_diario):
 
             result[semana_label] = vals
 
-    # Devolver con primera columna = nombre KPI
+    # 🔹 Agrupar KPIs por tipo
+    grupos = {
+        "VENTAS": [
+            "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"
+        ],
+        "TICKETS": [
+            "Q_Ticket", "Q_Tickets_WA", "Q_Tickets_Resueltos", "Reopen", "Q_Encuestas"
+        ],
+        "CALIDAD": [
+            "CSAT", "NPS Score", "Firt (h)", "firt_pct",
+            "Furt (h)", "furt_pct",
+            "Q_Auditorias", "Nota_Auditorias"
+        ],
+        "INSPECCIONES": [
+            "Inspecciones_Q",
+            "Cump_Exterior", "Incump_Exterior",
+            "Cump_Interior", "Incump_Interior",
+            "Cump_Conductor", "Incump_Conductor"
+        ],
+        "OTROS": [
+            "OFF_TIME", "Duracion_90", "Duracion_30",
+            "Abandonados", "Rescates"
+        ],
+    }
+
+    kpis_present = list(result.index)
+    usados = set()
+    new_index = []
+
+    for nombre_grupo, lista in grupos.items():
+        presentes = [k for k in lista if k in kpis_present]
+        if presentes:
+            # Fila cabecera de grupo
+            new_index.append(f"=== {nombre_grupo} ===")
+            for k in presentes:
+                new_index.append(k)
+                usados.add(k)
+
+    # Cualquier KPI que no haya quedado aún
+    restantes = [k for k in kpis_present if k not in usados]
+    if restantes:
+        new_index.append("=== OTROS KPI ===")
+        new_index.extend(restantes)
+
+    # Reindexar creando filas de grupo con NaN
+    result = result.reindex(new_index)
+
+    # Primera columna = nombre de KPI (o cabecera de grupo)
     result.insert(0, "KPI", result.index)
+
     return result.reset_index(drop=True)
 
