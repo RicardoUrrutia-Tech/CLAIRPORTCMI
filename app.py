@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import StringIO, BytesIO
-from processor import procesar_global
+from processor import procesar_global, build_transposed_view
 
 st.set_page_config(page_title="CLAIRPORT – Consolidado Global", layout="wide")
 st.title("📊 Consolidado Global Aeroportuario – CLAIRPORT")
@@ -43,6 +43,7 @@ with col2:
     inspecciones_file = st.file_uploader("🚗 Inspecciones Vehiculares (.xlsx)", type=["xlsx"])
     abandonados_file = st.file_uploader("👥 Clientes Abandonados (.xlsx)", type=["xlsx"])
     rescates_file = st.file_uploader("🆘 Rescates DO Aero (.csv)", type=["csv"])
+    whatsapp_file = st.file_uploader("💬 Tickets WhatsApp (.csv)", type=["csv"])
 
 st.divider()
 
@@ -76,11 +77,11 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     required = [
         ventas_file, performance_file, auditorias_file, offtime_file,
         duracion90_file, duracion30_file, inspecciones_file,
-        abandonados_file, rescates_file
+        abandonados_file, rescates_file, whatsapp_file
     ]
 
     if not all(required):
-        st.error("❌ Debes subir TODOS los archivos antes de continuar.")
+        st.error("❌ Debes subir TODOS los archivos antes de continuar (incluido Tickets WhatsApp).")
         st.stop()
 
     # =====================================================
@@ -144,15 +145,22 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         st.error(f"❌ Error leyendo Rescates: {e}")
         st.stop()
 
+    try:
+        df_whatsapp = read_generic_csv(whatsapp_file)
+    except Exception as e:
+        st.error(f"❌ Error leyendo Tickets WhatsApp: {e}")
+        st.stop()
+
     # =====================================================
     # 🔵 PROCESAMIENTO GLOBAL
     # =====================================================
 
     try:
-        df_diario, df_semanal, df_periodo = procesar_global(
+        df_diario, df_semanal, df_periodo, df_transpuesta = procesar_global(
             df_ventas, df_performance, df_auditorias,
             df_offtime, df_dur90, df_dur30,
             df_ins, df_aband, df_resc,
+            df_whatsapp,
             date_from, date_to
         )
     except Exception as e:
@@ -170,6 +178,9 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
     st.subheader("📊 Resumen del Periodo")
     st.dataframe(df_periodo, use_container_width=True)
 
+    st.subheader("📐 Vista Traspuesta (KPIs x Día / Semana)")
+    st.dataframe(df_transpuesta, use_container_width=True)
+
     # =====================================================
     # 📥 DESCARGA
     # =====================================================
@@ -179,6 +190,7 @@ if st.button("🚀 Procesar Consolidado Global", type="primary"):
         df_diario.to_excel(writer, index=False, sheet_name="Diario")
         df_semanal.to_excel(writer, index=False, sheet_name="Semanal")
         df_periodo.to_excel(writer, index=False, sheet_name="Periodo")
+        df_transpuesta.to_excel(writer, index=False, sheet_name="Vista_Traspuesta")
 
     st.download_button(
         "💾 Descargar Consolidado Global",
