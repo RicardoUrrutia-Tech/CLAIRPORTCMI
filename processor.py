@@ -552,4 +552,3 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
     result.insert(0, "KPI", result.index)
 
     return result.reset_index(drop=True)
-
