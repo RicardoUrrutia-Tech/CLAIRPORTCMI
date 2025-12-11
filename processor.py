@@ -34,10 +34,14 @@ def process_ventas(df):
     df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
 
     df["Ventas_Totales"] = df["qt_price_local"]
-    df["Ventas_Compartidas"] = np.where(df["ds_product_name"] == "van_compartida",
-                                        df["qt_price_local"], 0)
-    df["Ventas_Exclusivas"] = np.where(df["ds_product_name"] == "van_exclusive",
-                                       df["qt_price_local"], 0)
+    df["Ventas_Compartidas"] = np.where(
+        df["ds_product_name"] == "van_compartida",
+        df["qt_price_local"], 0
+    )
+    df["Ventas_Exclusivas"] = np.where(
+        df["ds_product_name"] == "van_exclusive",
+        df["qt_price_local"], 0
+    )
 
     diario = df.groupby("fecha", as_index=False).agg({
         "Ventas_Totales": "sum",
@@ -59,9 +63,14 @@ def process_performance(df):
 
     df["fecha"] = pd.to_datetime(df["Fecha de Referencia"], errors="coerce").dt.normalize()
 
+    # Cada fila = 1 ticket
     df["Q_Ticket"] = 1
-    df["Q_Tickets_Resueltos"] = np.where(df["Status"].str.lower() == "solved", 1, 0)
 
+    # ✅ Nuevo criterio: resueltos = todo lo que NO está "pending"
+    status = df["Status"].astype(str).str.lower().str.strip()
+    df["Q_Tickets_Resueltos"] = np.where(status != "pending", 1, 0)
+
+    # Encuestas: si hay CSAT o NPS
     df["Q_Encuestas"] = np.where(
         df["CSAT"].notna() | df["NPS Score"].notna(), 1, 0
     )
@@ -96,7 +105,7 @@ def process_auditorias(df):
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
     def to_date(x):
-        if pd.isna(x): 
+        if pd.isna(x):
             return None
         s = str(x).strip()
 
@@ -184,7 +193,7 @@ def process_duracion30(df):
 
 
 # ============================================================
-# 🟫 PROCESAR INSPECCIONES
+# 🟫 PROCESAR INSPECCIONES (CUMPLE/INCUMPLE)
 # ============================================================
 
 def process_inspecciones(df):
@@ -198,11 +207,33 @@ def process_inspecciones(df):
 
     df["Inspecciones_Q"] = 1
 
+    # ✅ Nuevos indicadores: Cumple 100% vs Incumple (<100%)
+    df["Cump_Exterior"] = (df["Cumplimiento_Exterior"] == 100).astype(int)
+    df["Incump_Exterior"] = (
+        (df["Cumplimiento_Exterior"] < 100) & df["Cumplimiento_Exterior"].notna()
+    ).astype(int)
+
+    df["Cump_Interior"] = (df["Cumplimiento_Interior"] == 100).astype(int)
+    df["Incump_Interior"] = (
+        (df["Cumplimiento_Interior"] < 100) & df["Cumplimiento_Interior"].notna()
+    ).astype(int)
+
+    df["Cump_Conductor"] = (df["Cumplimiento_Conductor"] == 100).astype(int)
+    df["Incump_Conductor"] = (
+        (df["Cumplimiento_Conductor"] < 100) & df["Cumplimiento_Conductor"].notna()
+    ).astype(int)
+
     diario = df.groupby("fecha", as_index=False).agg({
         "Inspecciones_Q": "sum",
         "Cumplimiento_Exterior": "mean",
         "Cumplimiento_Interior": "mean",
-        "Cumplimiento_Conductor": "mean"
+        "Cumplimiento_Conductor": "mean",
+        "Cump_Exterior": "sum",
+        "Incump_Exterior": "sum",
+        "Cump_Interior": "sum",
+        "Incump_Interior": "sum",
+        "Cump_Conductor": "sum",
+        "Incump_Conductor": "sum",
     })
 
     return diario
@@ -261,7 +292,29 @@ def process_rescates(df):
 
 
 # ============================================================
-# 📅 SEMANA HUMANA
+# 💬 PROCESAR TICKETS WHATSAPP
+# ============================================================
+
+def process_whatsapp(df):
+    df = clean_cols(df)
+
+    if "Created At Local Dt" not in df.columns:
+        return pd.DataFrame(columns=["fecha", "Q_Tickets_WA"])
+
+    df["fecha"] = pd.to_datetime(df["Created At Local Dt"], errors="coerce").dt.normalize()
+    df = df[df["fecha"].notna()]
+
+    df["Q_Tickets_WA"] = 1
+
+    diario = df.groupby("fecha", as_index=False).agg({
+        "Q_Tickets_WA": "sum"
+    })
+
+    return diario
+
+
+# ============================================================
+# 📅 SEMANA HUMANA (texto tipo '1-7 Noviembre')
 # ============================================================
 
 def semana_humana(fecha):
@@ -282,7 +335,8 @@ def semana_humana(fecha):
 
 def procesar_global(
     df_ventas, df_perf, df_aud, df_off, df_dur, df_dur30,
-    df_insp, df_aband, df_rescates, date_from, date_to
+    df_insp, df_aband, df_rescates, df_whatsapp,
+    date_from, date_to
 ):
 
     v = process_ventas(df_ventas)
@@ -294,6 +348,7 @@ def procesar_global(
     insp = process_inspecciones(df_insp)
     ab = process_abandonados(df_aband)
     resc = process_rescates(df_rescates)
+    wa = process_whatsapp(df_whatsapp)
 
     df = (
         v.merge(p, on="fecha", how="outer")
@@ -304,16 +359,30 @@ def procesar_global(
          .merge(insp, on="fecha", how="outer")
          .merge(ab, on="fecha", how="outer")
          .merge(resc, on="fecha", how="outer")
+         .merge(wa, on="fecha", how="outer")
     )
 
     df = df.sort_values("fecha")
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
 
+    # Si no hay WA o Q_Ticket, crear columnas para evitar errores
+    if "Q_Tickets_WA" not in df.columns:
+        df["Q_Tickets_WA"] = 0
+    if "Q_Ticket" not in df.columns:
+        df["Q_Ticket"] = 0
+
+    # ✅ Tickets no WA = total tickets Performance - tickets WA
+    df["Q_Tickets_No_WA"] = df["Q_Ticket"].fillna(0) - df["Q_Tickets_WA"].fillna(0)
+
     sum_cols = [
         "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Tickets_WA", "Q_Tickets_No_WA",
         "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
         "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
-        "Inspecciones_Q", "Abandonados", "Rescates"
+        "Inspecciones_Q", "Abandonados", "Rescates",
+        "Cump_Exterior", "Incump_Exterior",
+        "Cump_Interior", "Incump_Interior",
+        "Cump_Conductor", "Incump_Conductor",
     ]
 
     for c in sum_cols:
@@ -369,5 +438,100 @@ def procesar_global(
     df_sem = aplicar_formato(df_sem)
     df_per = aplicar_formato(df_per)
 
-    return df, df_sem, df_per
+    # 📐 Construir vista traspuesta
+    df_transpuesta = build_transposed_view(df)
+
+    return df, df_sem, df_per, df_transpuesta
+
+
+# ============================================================
+# 📐 VISTA TRASPUESTA (KPIs como filas, días/semana como columnas)
+# ============================================================
+
+def build_transposed_view(df_diario):
+    """
+    Construye una vista traspuesta donde:
+    - Filas = KPIs
+    - Columnas = días (dd/MM/YYYY) y, al final de cada semana, una columna de resumen:
+      'Semana 01 al 07 de Diciembre 2025'
+    """
+    if df_diario is None or df_diario.empty:
+        return pd.DataFrame()
+
+    df = df_diario.copy()
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    df = df.sort_values("fecha")
+
+    # Columnas consideradas como sumatorias / promedios (replicamos criterio)
+    sum_cols = [
+        "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
+        "Q_Tickets_WA", "Q_Tickets_No_WA",
+        "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
+        "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
+        "Inspecciones_Q", "Abandonados", "Rescates",
+        "Cump_Exterior", "Incump_Exterior",
+        "Cump_Interior", "Incump_Interior",
+        "Cump_Conductor", "Incump_Conductor",
+    ]
+    mean_cols = [
+        "CSAT", "NPS Score", "Firt (h)", "Furt (h)",
+        "firt_pct", "furt_pct", "Nota_Auditorias",
+        "Cumplimiento_Exterior", "Cumplimiento_Interior",
+        "Cumplimiento_Conductor"
+    ]
+
+    # KPI list = todas las columnas excepto fecha
+    kpis = [c for c in df.columns if c != "fecha"]
+    if not kpis:
+        return pd.DataFrame()
+
+    # Semana base: lunes de cada fecha
+    df["week_start"] = df["fecha"] - pd.to_timedelta(df["fecha"].dt.weekday, unit="D")
+    weeks = sorted(df["week_start"].unique())
+
+    # DF resultado: filas = KPIs, columnas se irán añadiendo
+    result = pd.DataFrame(index=kpis)
+
+    meses = {
+        1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
+        7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
+    }
+
+    for week_start in weeks:
+        mask_week = df["week_start"] == week_start
+        df_week = df[mask_week]
+        fechas_week = sorted(df_week["fecha"].unique())
+
+        # 1) Columnas por día
+        for fecha_dia in fechas_week:
+            col_name = fecha_dia.strftime("%d/%m/%Y")
+            fila = df[df["fecha"] == fecha_dia][kpis]
+            if fila.empty:
+                serie = pd.Series(index=kpis, data=np.nan)
+            else:
+                serie = fila.iloc[0]
+                serie = serie.reindex(kpis)
+            result[col_name] = serie.values
+
+        # 2) Columna resumen de semana
+        if fechas_week:
+            week_start_dt = pd.to_datetime(week_start)
+            week_end_dt = max(fechas_week)
+
+            semana_label = f"Semana {week_start_dt.day:02d} al {week_end_dt.day:02d} {meses[week_end_dt.month]} {week_end_dt.year}"
+
+            vals = []
+            for k in kpis:
+                if k in sum_cols:
+                    vals.append(df_week[k].sum())
+                elif k in mean_cols:
+                    vals.append(df_week[k].mean())
+                else:
+                    vals.append(np.nan)
+
+            result[semana_label] = vals
+
+    # Devolver con primera columna = nombre KPI
+    result.insert(0, "KPI", result.index)
+    return result.reset_index(drop=True)
 
