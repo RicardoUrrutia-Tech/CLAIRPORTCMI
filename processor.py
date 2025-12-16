@@ -469,7 +469,9 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
     Crea vista traspuesta con:
     - columnas por día (DD/MM/YYYY)
     - columna semanal al terminar domingo: 'Semana ...'
-    - columna mensual al terminar el mes: 'Mes ...'
+    - columna mensual cuando cambia el mes en la serie de datos: 'Mes ...'
+      (No exige que exista el último día calendario del mes; basta con que el siguiente
+       día disponible sea de otro mes, o que se termine el rango.)
 
     Reglas:
       * sum_cols: suma
@@ -509,10 +511,10 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
         return (subdf[op_name].sum() / denom) * 100
 
     all_dates = sorted(df["fecha"].unique())
+    all_dates = [pd.to_datetime(d).normalize() for d in all_dates]
     result = pd.DataFrame(index=kpis)
 
-    for d in all_dates:
-        d = pd.to_datetime(d).normalize()
+    for i, d in enumerate(all_dates):
         day_df = df[df["fecha"] == d]
         col_day = d.strftime("%d/%m/%Y")
 
@@ -539,10 +541,11 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
                     vals.append(np.nan)
             result[label] = vals
 
-        # Columna mensual (si fin de mes)
-        tomorrow = d + pd.Timedelta(days=1)
-        is_month_end = tomorrow.month != d.month
-        if is_month_end:
+        # Columna mensual (cuando cambia el mes en la serie)
+        next_d = all_dates[i + 1] if i + 1 < len(all_dates) else None
+        is_month_boundary = (next_d is None) or (next_d.month != d.month) or (next_d.year != d.year)
+
+        if is_month_boundary:
             ms = d.replace(day=1)
             month_df = df[(df["fecha"] >= ms) & (df["fecha"] <= d)]
 
