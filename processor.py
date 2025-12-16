@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 # 🔧 LIMPIEZA DE COLUMNAS
 # ============================================================
 
-def clean_cols(df):
+def clean_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
     df.columns = (
         df.columns.astype(str)
         .str.replace("ï»¿", "", regex=False)
@@ -16,28 +17,44 @@ def clean_cols(df):
     return df
 
 
-def safe_div(numer, denom):
-    denom = denom.replace(0, np.nan)
-    return (numer / denom)
+def safe_pct(numer: pd.Series, denom: pd.Series) -> pd.Series:
+    """Retorna 100 * numer/denom, con NaN cuando denom es 0 o NaN."""
+    denom2 = denom.replace(0, np.nan)
+    return (100.0 * numer / denom2)
 
 
 # ============================================================
 # 🟦 PROCESAR VENTAS
 # ============================================================
 
-def process_ventas(df):
+def process_ventas(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    KPIs existentes:
+      - Ventas_Totales (suma qt_price_local)
+      - Ventas_Compartidas (ds_product_name == van_compartida)
+      - Ventas_Exclusivas (ds_product_name == van_exclusive)
+
+    Nuevos KPIs de volumen (solo FINISH_REASON_DROPOFF):
+      - Q_journeys: count distinct journey_id (dropoff)
+      - Q_pasajeros: count registros (dropoff)
+      - Q_pasajeros_exclusives: count dropoff con van_exclusive
+      - Q_pasajeros_compartidas: count dropoff con van_compartida
+    """
     df = clean_cols(df)
 
-    # fecha: tm_start_local_at → fecha
+    # Fecha base para agrupar por día
     if "tm_start_local_at" in df.columns:
         df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
     elif "createdAt_local" in df.columns:
         df["fecha"] = pd.to_datetime(df["createdAt_local"], errors="coerce").dt.normalize()
+    elif "date" in df.columns:
+        # En algunos exports 'date' viene como DD-MM-YYYY o similar
+        df["fecha"] = pd.to_datetime(df["date"], errors="coerce", dayfirst=True).dt.normalize()
     else:
         return pd.DataFrame(columns=[
             "fecha",
             "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
-            "Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas"
+            "Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas",
         ])
 
     # Monto / precio
@@ -53,62 +70,39 @@ def process_ventas(df):
     else:
         df["qt_price_local"] = np.nan
 
-    # Ventas (se mantienen como estaban: por producto y monto)
-    df["Ventas_Totales"] = df["qt_price_local"]
-    df["Ventas_Compartidas"] = np.where(
-        df.get("ds_product_name", "") == "van_compartida",
-        df["qt_price_local"], 0
-    )
-    df["Ventas_Exclusivas"] = np.where(
-        df.get("ds_product_name", "") == "van_exclusive",
-        df["qt_price_local"], 0
-    )
+    # Ventas (monto)
+    prod = df.get("ds_product_name", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower().str.strip()
 
-    # ---------------------------
-    # NUEVOS KPI (pasajeros/journeys)
-    # ---------------------------
-    # Usuario pidió: finishReason = FINISH_REASON_DROPOFF
+    df["Ventas_Totales"] = df["qt_price_local"]
+    df["Ventas_Compartidas"] = np.where(prod == "van_compartida", df["qt_price_local"], 0)
+    df["Ventas_Exclusivas"] = np.where(prod == "van_exclusive", df["qt_price_local"], 0)
+
+    # Dropoff filter (finishReason)
     fr_col = None
-    for c in ["finishReason", "finisReason", "finish_reason", "FinishReason", "Finish Reason"]:
+    for c in ["finishReason", "finisReason", "FinishReason", "finish_reason", "Finish Reason"]:
         if c in df.columns:
             fr_col = c
             break
 
-    # journey_id y ds_product_name son requeridos para desgloses
-    # Si faltan, igual devolvemos 0 para que no rompa el merge.
     if fr_col is None:
-        df["_is_dropoff"] = False
+        is_dropoff = pd.Series([False] * len(df), index=df.index)
     else:
-        df["_is_dropoff"] = (
-            df[fr_col].astype(str).str.strip().str.upper() == "FINISH_REASON_DROPOFF"
-        )
+        is_dropoff = df[fr_col].astype(str).str.strip().str.upper().eq("FINISH_REASON_DROPOFF")
 
-    # Q_pasajeros: todos los registros dropoff
-    df["Q_pasajeros"] = df["_is_dropoff"].astype(int)
+    # Volumen de pasajeros
+    df["Q_pasajeros"] = is_dropoff.astype(int)
+    df["Q_pasajeros_exclusives"] = np.where(is_dropoff & (prod == "van_exclusive"), 1, 0)
+    df["Q_pasajeros_compartidas"] = np.where(is_dropoff & (prod == "van_compartida"), 1, 0)
 
-    # Q_pasajeros por producto (si existe ds_product_name)
-    prod = df.get("ds_product_name", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower().str.strip()
-    df["Q_pasajeros_exclusives"] = np.where(df["_is_dropoff"] & (prod == "van_exclusive"), 1, 0)
-    df["Q_pasajeros_compartidas"] = np.where(df["_is_dropoff"] & (prod == "van_compartida"), 1, 0)
-
-    # Q_journeys: dropoff + journey_id distintos
+    # Journeys (unique journey_id para dropoff)
     if "journey_id" in df.columns:
-        df["_journey_id_clean"] = df["journey_id"].astype(str).str.strip()
-        # marcamos 1 solo en la primera ocurrencia diaria por journey_id
-        df["_journey_flag"] = (
-            df["_is_dropoff"]
-            & df["_journey_id_clean"].ne("")
-            & ~df["_journey_id_clean"].isna()
-        )
+        jid = df["journey_id"].astype(str).str.strip()
+        df["_jid"] = jid
     else:
-        df["_journey_flag"] = False
-        df["_journey_id_clean"] = ""
+        df["_jid"] = ""
 
-    # Agrupación diaria
-    # Q_journeys = nunique de journey_id para dropoff
-    g = df.groupby("fecha", as_index=False)
-
-    diario_money = g.agg({
+    # Agregación diaria base
+    diario = df.groupby("fecha", as_index=False).agg({
         "Ventas_Totales": "sum",
         "Ventas_Compartidas": "sum",
         "Ventas_Exclusivas": "sum",
@@ -117,17 +111,17 @@ def process_ventas(df):
         "Q_pasajeros_compartidas": "sum",
     })
 
+    # Q_journeys (nunique)
     if "journey_id" in df.columns:
-        diario_j = (
-            df[df["_journey_flag"]]
-            .groupby("fecha")["_journey_id_clean"]
+        qj = (
+            df[is_dropoff & df["_jid"].ne("") & df["_jid"].notna()]
+            .groupby("fecha")["_jid"]
             .nunique()
             .reset_index()
-            .rename(columns={"_journey_id_clean": "Q_journeys"})
+            .rename(columns={"_jid": "Q_journeys"})
         )
-        diario = diario_money.merge(diario_j, on="fecha", how="left")
+        diario = diario.merge(qj, on="fecha", how="left")
     else:
-        diario = diario_money.copy()
         diario["Q_journeys"] = 0
 
     diario["Q_journeys"] = diario["Q_journeys"].fillna(0)
@@ -139,7 +133,7 @@ def process_ventas(df):
 # 🟩 PROCESAR PERFORMANCE
 # ============================================================
 
-def process_performance(df):
+def process_performance(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
 
     df = df.rename(columns={"% Firt": "firt_pct", "% Furt": "furt_pct"})
@@ -149,7 +143,7 @@ def process_performance(df):
 
     df["Q_Ticket"] = 1
 
-    # Resueltos = todo menos pending (mantengo tu criterio global actual)
+    # Resueltos = todo menos pending (criterio global actual)
     status = df["Status"].astype(str).str.lower().str.strip()
     df["Q_Tickets_Resueltos"] = np.where(status != "pending", 1, 0)
 
@@ -176,10 +170,10 @@ def process_performance(df):
 
 
 # ============================================================
-# 🟪 PROCESAR AUDITORÍAS (ROBUSTO + NOTA SIEMPRE DISPONIBLE)
+# 🟪 PROCESAR AUDITORÍAS
 # ============================================================
 
-def process_auditorias(df):
+def process_auditorias(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
 
     candidates = ["Date Time Reference", "Date Time", "ï»¿Date Time"]
@@ -188,7 +182,7 @@ def process_auditorias(df):
     if col_fecha is None:
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
-    def to_date(x):
+    def to_date_aud(x):
         if pd.isna(x):
             return None
 
@@ -212,7 +206,7 @@ def process_auditorias(df):
         except:
             return None
 
-    df["fecha"] = df[col_fecha].apply(to_date)
+    df["fecha"] = df[col_fecha].apply(to_date_aud)
     df = df[df["fecha"].notna()]
     df["fecha"] = pd.to_datetime(df["fecha"])
 
@@ -242,7 +236,7 @@ def process_auditorias(df):
 # 🟧 OTROS PROCESADORES
 # ============================================================
 
-def process_offtime(df):
+def process_offtime(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
     df["OFF_TIME"] = np.where(
@@ -252,22 +246,22 @@ def process_offtime(df):
     return df.groupby("fecha", as_index=False).agg({"OFF_TIME": "sum"})
 
 
-def process_duracion(df):
+def process_duracion(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
     df["Duracion_90"] = np.where(pd.to_numeric(df["Duration (Minutes)"], errors="coerce") > 90, 1, 0)
     return df.groupby("fecha", as_index=False).agg({"Duracion_90": "sum"})
 
 
-def process_duracion30(df):
+def process_duracion30(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["Day of tm_start_local_at"], errors="coerce").dt.normalize()
     df["Duracion_30"] = 1
     return df.groupby("fecha", as_index=False).agg({"Duracion_30": "sum"})
 
 
-def process_inspecciones(df):
-    # (se mantiene tal cual tu versión actual)
+def process_inspecciones(df: pd.DataFrame) -> pd.DataFrame:
+    # (se mantiene tu versión actual)
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.normalize()
 
@@ -305,14 +299,14 @@ def process_inspecciones(df):
     return diario
 
 
-def process_abandonados(df):
+def process_abandonados(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["Marca temporal"], errors="coerce").dt.normalize()
     df["Abandonados"] = 1
     return df.groupby("fecha", as_index=False).agg({"Abandonados": "sum"})
 
 
-def process_rescates(df):
+def process_rescates(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
     if "Start At Local Dttm" not in df.columns or "User Email" not in df.columns:
         return pd.DataFrame(columns=["fecha", "Rescates"])
@@ -325,7 +319,7 @@ def process_rescates(df):
     return df.groupby("fecha", as_index=False).agg({"Rescates": "sum"})
 
 
-def process_whatsapp(df):
+def process_whatsapp(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_cols(df)
     if "Created At Local Dt" not in df.columns:
         return pd.DataFrame(columns=["fecha", "Q_Tickets_WA"])
@@ -338,7 +332,7 @@ def process_whatsapp(df):
 # 📅 SEMANA HUMANA
 # ============================================================
 
-def semana_humana(fecha):
+def semana_humana(fecha: pd.Timestamp) -> str:
     lunes = fecha - pd.Timedelta(days=fecha.weekday())
     domingo = lunes + pd.Timedelta(days=6)
     meses = {
@@ -393,7 +387,7 @@ def procesar_global(
         "Q_Auditorias",
         # ventas $
         "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
-        # ventas volumen (NUEVO)
+        # ventas volumen
         "Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas",
         # otros operativos
         "OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates",
@@ -422,13 +416,12 @@ def procesar_global(
     # ---------------------------------------------------------
     # % Operativos respecto a pasajeros (NUEVO)
     # ---------------------------------------------------------
-    # Se calculan en diario y luego se recalculan en semanal/periodo (para no promediar % mal)
     operativos = ["OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates"]
+    pct_cols = []
     for op in operativos:
         colp = f"{op}_pct_pasajeros"
-        df[colp] = (safe_div(df[op], df["Q_pasajeros"]) * 100).round(4)
-
-    pct_cols = [f"{op}_pct_pasajeros" for op in operativos]
+        df[colp] = safe_pct(df[op], df["Q_pasajeros"]).round(4)
+        pct_cols.append(colp)
 
     # ---------------------------------------------------------
     # SEMANAL
@@ -438,16 +431,12 @@ def procesar_global(
 
     agg = {c: "sum" for c in sum_cols}
     agg.update({c: "mean" for c in mean_cols})
-    # Para % operativos: NO promediar; recalcular después
-    for c in pct_cols:
-        agg[c] = "sum"  # placeholder, luego recalculamos bien
-
     df_sem = df_sem.groupby("Semana", as_index=False).agg(agg)
 
-    # recalcular % operativos en semanal
+    # recalcular % operativos en semanal como (sum op / sum pasajeros)
     for op in operativos:
         colp = f"{op}_pct_pasajeros"
-        df_sem[colp] = (safe_div(df_sem[op], df_sem["Q_pasajeros"]) * 100).round(4)
+        df_sem[colp] = safe_pct(df_sem[op], df_sem["Q_pasajeros"]).round(4)
 
     # ---------------------------------------------------------
     # PERIODO
@@ -457,23 +446,16 @@ def procesar_global(
 
     agg2 = {c: "sum" for c in sum_cols}
     agg2.update({c: "mean" for c in mean_cols})
-    for c in pct_cols:
-        agg2[c] = "sum"  # placeholder, luego recalculamos
-
     df_per = df_per.groupby("Periodo", as_index=False).agg(agg2)
 
     for op in operativos:
         colp = f"{op}_pct_pasajeros"
-        df_per[colp] = (safe_div(df_per[op], df_per["Q_pasajeros"]) * 100).round(4)
+        df_per[colp] = safe_pct(df_per[op], df_per["Q_pasajeros"]).round(4)
 
     # ---------------------------------------------------------
     # Vista Traspuesta
     # ---------------------------------------------------------
-    # Incluir también los % como KPIs tipo "mean_cols" para que el semanal en traspuesta sea promedio de semana_df,
-    # pero nosotros ya recalculamos semanal/periodo; en traspuesta semanal usamos semana_df[k].mean()
-    # Para evitar inconsistencias, tratamos los % como KPIs de promedio en la vista traspuesta.
-    mean_cols_for_transposed = mean_cols + pct_cols
-    df_transp = build_transposed_view(df, sum_cols + operativos + ["Q_pasajeros"], mean_cols_for_transposed)
+    df_transp = build_transposed_view(df, sum_cols=sum_cols, mean_cols=mean_cols, pct_cols=pct_cols)
 
     return df, df_sem, df_per, df_transp
 
@@ -482,7 +464,14 @@ def procesar_global(
 # 📐 VISTA TRASPUESTA
 # ============================================================
 
-def build_transposed_view(df_diario, sum_cols, mean_cols):
+def build_transposed_view(df_diario: pd.DataFrame, sum_cols, mean_cols, pct_cols):
+    """
+    Matriz KPI x día, con columna de resumen semanal después de cada domingo.
+
+    IMPORTANTE: para los ratios *_pct_pasajeros, el resumen semanal se calcula como:
+      100 * sum(numerador) / sum(Q_pasajeros)
+    y NO como promedio simple de los % diarios.
+    """
     if df_diario is None or df_diario.empty:
         return pd.DataFrame()
 
@@ -519,7 +508,14 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
 
         vals = []
         for k in kpis:
-            if k in sum_cols:
+            if k in pct_cols and k.endswith("_pct_pasajeros"):
+                numer = k.replace("_pct_pasajeros", "")
+                if (numer in week_df.columns) and ("Q_pasajeros" in week_df.columns):
+                    denom_sum = week_df["Q_pasajeros"].sum()
+                    vals.append((100.0 * week_df[numer].sum() / denom_sum) if denom_sum > 0 else np.nan)
+                else:
+                    vals.append(np.nan)
+            elif k in sum_cols:
                 vals.append(week_df[k].sum())
             elif k in mean_cols:
                 vals.append(week_df[k].mean())
@@ -528,7 +524,7 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
 
         result[label] = vals
 
-    # Grupos de KPI (actualizados con nuevos KPIs de ventas y % operativos)
+    # Grupos de KPI (incluye nuevos KPIs y ratios)
     grupos = {
         "VENTAS (MONTO)": ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"],
         "VENTAS (VOLUMEN)": ["Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas"],
