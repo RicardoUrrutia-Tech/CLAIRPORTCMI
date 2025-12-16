@@ -464,67 +464,103 @@ def procesar_global(
 # 📐 VISTA TRASPUESTA
 # ============================================================
 
-def build_transposed_view(df_diario: pd.DataFrame, sum_cols, mean_cols, pct_cols):
+def build_transposed_view(df_diario, sum_cols, mean_cols):
     """
-    Matriz KPI x día, con columna de resumen semanal después de cada domingo.
+    Crea vista traspuesta con:
+    - columnas por día (DD/MM/YYYY)
+    - columna semanal al terminar domingo: 'Semana ...'
+    - columna mensual al terminar el mes: 'Mes ...'
 
-    IMPORTANTE: para los ratios *_pct_pasajeros, el resumen semanal se calcula como:
-      100 * sum(numerador) / sum(Q_pasajeros)
-    y NO como promedio simple de los % diarios.
+    Reglas:
+      * sum_cols: suma
+      * mean_cols: promedio
+      * ratios *_pct_pasajeros: se recalculan como 100 * sum(numerador) / sum(Q_pasajeros)
     """
     if df_diario is None or df_diario.empty:
         return pd.DataFrame()
 
     df = df_diario.copy()
-    df["fecha"] = pd.to_datetime(df["fecha"])
+    df["fecha"] = pd.to_datetime(df["fecha"]).dt.normalize()
     df = df.sort_values("fecha")
 
+    # Lista de KPIs (todo menos fecha)
     kpis = [c for c in df.columns if c != "fecha"]
 
-    df["week_start"] = df["fecha"] - pd.to_timedelta(df["fecha"].dt.weekday, unit="D")
-    weeks = sorted(df["week_start"].unique())
-
-    result = pd.DataFrame(index=kpis)
+    # Detectar ratios operativos por pasajeros
+    operativos = ["OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates"]
+    pct_cols = [f"{op}_pct_pasajeros" for op in operativos if f"{op}_pct_pasajeros" in df.columns]
 
     meses = {
         1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
         7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
     }
 
-    for ws in weeks:
-        week_df = df[df["week_start"] == ws]
-        fechas = sorted(week_df["fecha"].unique())
+    def week_label(start_date, end_date):
+        return f"Semana {start_date.day:02d} al {end_date.day:02d} {meses[end_date.month]} {end_date.year}"
 
-        # Días
-        for f in fechas:
-            col = f.strftime("%d/%m/%Y")
-            row = week_df[week_df["fecha"] == f][kpis]
-            result[col] = row.iloc[0] if len(row) > 0 else np.nan
+    def month_label(any_date):
+        return f"Mes {meses[any_date.month]} {any_date.year}"
 
-        # Semana (resumen)
-        start = pd.to_datetime(ws)
-        end = max(fechas)
-        label = f"Semana {start.day:02d} al {end.day:02d} {meses[end.month]} {end.year}"
+    # Recalcular % como 100*sum(numerador)/sum(Q_pasajeros)
+    def recompute_pct(subdf, op_name):
+        denom = subdf.get("Q_pasajeros", pd.Series([0] * len(subdf), index=subdf.index)).sum()
+        if denom == 0:
+            return np.nan
+        return (subdf[op_name].sum() / denom) * 100
 
-        vals = []
-        for k in kpis:
-            if k in pct_cols and k.endswith("_pct_pasajeros"):
-                numer = k.replace("_pct_pasajeros", "")
-                if (numer in week_df.columns) and ("Q_pasajeros" in week_df.columns):
-                    denom_sum = week_df["Q_pasajeros"].sum()
-                    vals.append((100.0 * week_df[numer].sum() / denom_sum) if denom_sum > 0 else np.nan)
+    all_dates = sorted(df["fecha"].unique())
+    result = pd.DataFrame(index=kpis)
+
+    for d in all_dates:
+        d = pd.to_datetime(d).normalize()
+        day_df = df[df["fecha"] == d]
+        col_day = d.strftime("%d/%m/%Y")
+
+        # Columna diaria
+        row = day_df[kpis]
+        result[col_day] = row.iloc[0] if len(row) > 0 else np.nan
+
+        # Columna semanal (si domingo)
+        if d.weekday() == 6:
+            ws = d - pd.Timedelta(days=6)
+            week_df = df[(df["fecha"] >= ws) & (df["fecha"] <= d)]
+
+            label = week_label(ws, d)
+            vals = []
+            for k in kpis:
+                if k in pct_cols:
+                    op = k.replace("_pct_pasajeros", "")
+                    vals.append(recompute_pct(week_df, op))
+                elif k in sum_cols:
+                    vals.append(week_df[k].sum())
+                elif k in mean_cols:
+                    vals.append(week_df[k].mean())
                 else:
                     vals.append(np.nan)
-            elif k in sum_cols:
-                vals.append(week_df[k].sum())
-            elif k in mean_cols:
-                vals.append(week_df[k].mean())
-            else:
-                vals.append(np.nan)
+            result[label] = vals
 
-        result[label] = vals
+        # Columna mensual (si fin de mes)
+        tomorrow = d + pd.Timedelta(days=1)
+        is_month_end = tomorrow.month != d.month
+        if is_month_end:
+            ms = d.replace(day=1)
+            month_df = df[(df["fecha"] >= ms) & (df["fecha"] <= d)]
 
-    # Grupos de KPI (incluye nuevos KPIs y ratios)
+            label = month_label(d)
+            vals = []
+            for k in kpis:
+                if k in pct_cols:
+                    op = k.replace("_pct_pasajeros", "")
+                    vals.append(recompute_pct(month_df, op))
+                elif k in sum_cols:
+                    vals.append(month_df[k].sum())
+                elif k in mean_cols:
+                    vals.append(month_df[k].mean())
+                else:
+                    vals.append(np.nan)
+            result[label] = vals
+
+    # Grupos de KPI (mantener orden)
     grupos = {
         "VENTAS (MONTO)": ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"],
         "VENTAS (VOLUMEN)": ["Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas"],
