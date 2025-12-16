@@ -15,6 +15,12 @@ def clean_cols(df):
     )
     return df
 
+
+def safe_div(numer, denom):
+    denom = denom.replace(0, np.nan)
+    return (numer / denom)
+
+
 # ============================================================
 # 🟦 PROCESAR VENTAS
 # ============================================================
@@ -22,36 +28,112 @@ def clean_cols(df):
 def process_ventas(df):
     df = clean_cols(df)
 
-    # tm_start_local_at → fecha
-    df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
+    # fecha: tm_start_local_at → fecha
+    if "tm_start_local_at" in df.columns:
+        df["fecha"] = pd.to_datetime(df["tm_start_local_at"], errors="coerce").dt.normalize()
+    elif "createdAt_local" in df.columns:
+        df["fecha"] = pd.to_datetime(df["createdAt_local"], errors="coerce").dt.normalize()
+    else:
+        return pd.DataFrame(columns=[
+            "fecha",
+            "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
+            "Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas"
+        ])
 
     # Monto / precio
-    df["qt_price_local"] = (
-        df["qt_price_local"]
-        .astype(str)
-        .str.replace(",", "", regex=False)
-        .str.replace(" ", "", regex=False)
-        .str.replace("$", "", regex=False)
-    )
-    df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
+    if "qt_price_local" in df.columns:
+        df["qt_price_local"] = (
+            df["qt_price_local"]
+            .astype(str)
+            .str.replace(",", "", regex=False)
+            .str.replace(" ", "", regex=False)
+            .str.replace("$", "", regex=False)
+        )
+        df["qt_price_local"] = pd.to_numeric(df["qt_price_local"], errors="coerce")
+    else:
+        df["qt_price_local"] = np.nan
 
+    # Ventas (se mantienen como estaban: por producto y monto)
     df["Ventas_Totales"] = df["qt_price_local"]
     df["Ventas_Compartidas"] = np.where(
-        df["ds_product_name"] == "van_compartida",
+        df.get("ds_product_name", "") == "van_compartida",
         df["qt_price_local"], 0
     )
     df["Ventas_Exclusivas"] = np.where(
-        df["ds_product_name"] == "van_exclusive",
+        df.get("ds_product_name", "") == "van_exclusive",
         df["qt_price_local"], 0
     )
 
-    diario = df.groupby("fecha", as_index=False).agg({
+    # ---------------------------
+    # NUEVOS KPI (pasajeros/journeys)
+    # ---------------------------
+    # Usuario pidió: finishReason = FINISH_REASON_DROPOFF
+    fr_col = None
+    for c in ["finishReason", "finisReason", "finish_reason", "FinishReason", "Finish Reason"]:
+        if c in df.columns:
+            fr_col = c
+            break
+
+    # journey_id y ds_product_name son requeridos para desgloses
+    # Si faltan, igual devolvemos 0 para que no rompa el merge.
+    if fr_col is None:
+        df["_is_dropoff"] = False
+    else:
+        df["_is_dropoff"] = (
+            df[fr_col].astype(str).str.strip().str.upper() == "FINISH_REASON_DROPOFF"
+        )
+
+    # Q_pasajeros: todos los registros dropoff
+    df["Q_pasajeros"] = df["_is_dropoff"].astype(int)
+
+    # Q_pasajeros por producto (si existe ds_product_name)
+    prod = df.get("ds_product_name", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower().str.strip()
+    df["Q_pasajeros_exclusives"] = np.where(df["_is_dropoff"] & (prod == "van_exclusive"), 1, 0)
+    df["Q_pasajeros_compartidas"] = np.where(df["_is_dropoff"] & (prod == "van_compartida"), 1, 0)
+
+    # Q_journeys: dropoff + journey_id distintos
+    if "journey_id" in df.columns:
+        df["_journey_id_clean"] = df["journey_id"].astype(str).str.strip()
+        # marcamos 1 solo en la primera ocurrencia diaria por journey_id
+        df["_journey_flag"] = (
+            df["_is_dropoff"]
+            & df["_journey_id_clean"].ne("")
+            & ~df["_journey_id_clean"].isna()
+        )
+    else:
+        df["_journey_flag"] = False
+        df["_journey_id_clean"] = ""
+
+    # Agrupación diaria
+    # Q_journeys = nunique de journey_id para dropoff
+    g = df.groupby("fecha", as_index=False)
+
+    diario_money = g.agg({
         "Ventas_Totales": "sum",
         "Ventas_Compartidas": "sum",
         "Ventas_Exclusivas": "sum",
+        "Q_pasajeros": "sum",
+        "Q_pasajeros_exclusives": "sum",
+        "Q_pasajeros_compartidas": "sum",
     })
 
+    if "journey_id" in df.columns:
+        diario_j = (
+            df[df["_journey_flag"]]
+            .groupby("fecha")["_journey_id_clean"]
+            .nunique()
+            .reset_index()
+            .rename(columns={"_journey_id_clean": "Q_journeys"})
+        )
+        diario = diario_money.merge(diario_j, on="fecha", how="left")
+    else:
+        diario = diario_money.copy()
+        diario["Q_journeys"] = 0
+
+    diario["Q_journeys"] = diario["Q_journeys"].fillna(0)
+
     return diario
+
 
 # ============================================================
 # 🟩 PROCESAR PERFORMANCE
@@ -67,7 +149,7 @@ def process_performance(df):
 
     df["Q_Ticket"] = 1
 
-    # Resueltos = todo menos pending
+    # Resueltos = todo menos pending (mantengo tu criterio global actual)
     status = df["Status"].astype(str).str.lower().str.strip()
     df["Q_Tickets_Resueltos"] = np.where(status != "pending", 1, 0)
 
@@ -92,6 +174,7 @@ def process_performance(df):
 
     return diario
 
+
 # ============================================================
 # 🟪 PROCESAR AUDITORÍAS (ROBUSTO + NOTA SIEMPRE DISPONIBLE)
 # ============================================================
@@ -99,7 +182,6 @@ def process_performance(df):
 def process_auditorias(df):
     df = clean_cols(df)
 
-    # Columnas posibles de fecha
     candidates = ["Date Time Reference", "Date Time", "ï»¿Date Time"]
     col_fecha = next((c for c in candidates if c in df.columns), None)
 
@@ -107,11 +189,9 @@ def process_auditorias(df):
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
     def to_date(x):
-        """Parseo robusto DAYFIRST como en la versión que sí funcionaba completamente."""
         if pd.isna(x):
             return None
 
-        # Número de Excel
         if isinstance(x, (int, float)):
             try:
                 if x > 30000:
@@ -121,14 +201,12 @@ def process_auditorias(df):
 
         s = str(x).strip()
 
-        # Formatos explícitos
         for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%Y-%m-%d", "%Y/%m/%d"):
             try:
                 return datetime.strptime(s, fmt).date()
             except:
                 pass
 
-        # Fallback general
         try:
             return pd.to_datetime(s, dayfirst=True).date()
         except:
@@ -138,7 +216,6 @@ def process_auditorias(df):
     df = df[df["fecha"].notna()]
     df["fecha"] = pd.to_datetime(df["fecha"])
 
-    # Limpieza de puntaje
     if "Total Audit Score" not in df.columns:
         return pd.DataFrame(columns=["fecha", "Q_Auditorias", "Nota_Auditorias"])
 
@@ -150,11 +227,7 @@ def process_auditorias(df):
         .str.strip()
     )
 
-    df["Nota_Auditorias"] = pd.to_numeric(score_raw, errors="coerce")
-
-    # Si no se pudo parsear alguna nota, poner 0 para evitar días vacíos
-    df["Nota_Auditorias"] = df["Nota_Auditorias"].fillna(0)
-
+    df["Nota_Auditorias"] = pd.to_numeric(score_raw, errors="coerce").fillna(0)
     df["Q_Auditorias"] = 1
 
     diario = df.groupby("fecha", as_index=False).agg({
@@ -164,8 +237,9 @@ def process_auditorias(df):
 
     return diario
 
+
 # ============================================================
-# 🟧 OTROS PROCESAD0RES
+# 🟧 OTROS PROCESADORES
 # ============================================================
 
 def process_offtime(df):
@@ -181,7 +255,7 @@ def process_offtime(df):
 def process_duracion(df):
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["Start At Local Dt"], errors="coerce").dt.normalize()
-    df["Duracion_90"] = np.where(df["Duration (Minutes)"] > 90, 1, 0)
+    df["Duracion_90"] = np.where(pd.to_numeric(df["Duration (Minutes)"], errors="coerce") > 90, 1, 0)
     return df.groupby("fecha", as_index=False).agg({"Duracion_90": "sum"})
 
 
@@ -193,6 +267,7 @@ def process_duracion30(df):
 
 
 def process_inspecciones(df):
+    # (se mantiene tal cual tu versión actual)
     df = clean_cols(df)
     df["fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.normalize()
 
@@ -253,10 +328,11 @@ def process_rescates(df):
 def process_whatsapp(df):
     df = clean_cols(df)
     if "Created At Local Dt" not in df.columns:
-        return pd.DataFrame(columns=["fecha","Q_Tickets_WA"])
+        return pd.DataFrame(columns=["fecha", "Q_Tickets_WA"])
     df["fecha"] = pd.to_datetime(df["Created At Local Dt"], errors="coerce").dt.normalize()
     df["Q_Tickets_WA"] = 1
     return df.groupby("fecha", as_index=False).agg({"Q_Tickets_WA": "sum"})
+
 
 # ============================================================
 # 📅 SEMANA HUMANA
@@ -266,10 +342,11 @@ def semana_humana(fecha):
     lunes = fecha - pd.Timedelta(days=fecha.weekday())
     domingo = lunes + pd.Timedelta(days=6)
     meses = {
-        1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
-        7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
     }
     return f"{lunes.day}-{domingo.day} {meses[domingo.month]}"
+
 
 # ============================================================
 # 🔵 PROCESAR GLOBAL
@@ -308,12 +385,20 @@ def procesar_global(
     df = df[(df["fecha"] >= date_from) & (df["fecha"] <= date_to)]
     df = df.sort_values("fecha")
 
+    # --- columnas base
     sum_cols = [
+        # performance / calidad
         "Q_Encuestas", "Reopen", "Q_Ticket", "Q_Tickets_Resueltos",
         "Q_Tickets_WA",
-        "Q_Auditorias", "OFF_TIME", "Duracion_90", "Duracion_30",
+        "Q_Auditorias",
+        # ventas $
         "Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas",
-        "Inspecciones_Q", "Abandonados", "Rescates",
+        # ventas volumen (NUEVO)
+        "Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas",
+        # otros operativos
+        "OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates",
+        # inspecciones
+        "Inspecciones_Q",
         "Cump_Exterior", "Incump_Exterior",
         "Cump_Interior", "Incump_Interior",
         "Cump_Conductor", "Incump_Conductor",
@@ -329,30 +414,66 @@ def procesar_global(
         if c in df.columns:
             df[c] = df[c].fillna(0)
 
-    # Promedios: OJO → NO convertir nota de auditoría 0 en NaN
+    # Promedios: NO convertir Nota_Auditorias 0 en NaN
     for c in mean_cols:
         if c in df.columns and c != "Nota_Auditorias":
             df[c] = df[c].replace({0: np.nan})
 
     # ---------------------------------------------------------
+    # % Operativos respecto a pasajeros (NUEVO)
+    # ---------------------------------------------------------
+    # Se calculan en diario y luego se recalculan en semanal/periodo (para no promediar % mal)
+    operativos = ["OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates"]
+    for op in operativos:
+        colp = f"{op}_pct_pasajeros"
+        df[colp] = (safe_div(df[op], df["Q_pasajeros"]) * 100).round(4)
+
+    pct_cols = [f"{op}_pct_pasajeros" for op in operativos]
+
+    # ---------------------------------------------------------
     # SEMANAL
+    # ---------------------------------------------------------
     df_sem = df.copy()
     df_sem["Semana"] = df_sem["fecha"].apply(semana_humana)
+
     agg = {c: "sum" for c in sum_cols}
     agg.update({c: "mean" for c in mean_cols})
+    # Para % operativos: NO promediar; recalcular después
+    for c in pct_cols:
+        agg[c] = "sum"  # placeholder, luego recalculamos bien
+
     df_sem = df_sem.groupby("Semana", as_index=False).agg(agg)
+
+    # recalcular % operativos en semanal
+    for op in operativos:
+        colp = f"{op}_pct_pasajeros"
+        df_sem[colp] = (safe_div(df_sem[op], df_sem["Q_pasajeros"]) * 100).round(4)
 
     # ---------------------------------------------------------
     # PERIODO
+    # ---------------------------------------------------------
     df_per = df.copy()
     df_per["Periodo"] = f"{date_from.date()} → {date_to.date()}"
+
     agg2 = {c: "sum" for c in sum_cols}
     agg2.update({c: "mean" for c in mean_cols})
+    for c in pct_cols:
+        agg2[c] = "sum"  # placeholder, luego recalculamos
+
     df_per = df_per.groupby("Periodo", as_index=False).agg(agg2)
+
+    for op in operativos:
+        colp = f"{op}_pct_pasajeros"
+        df_per[colp] = (safe_div(df_per[op], df_per["Q_pasajeros"]) * 100).round(4)
 
     # ---------------------------------------------------------
     # Vista Traspuesta
-    df_transp = build_transposed_view(df, sum_cols, mean_cols)
+    # ---------------------------------------------------------
+    # Incluir también los % como KPIs tipo "mean_cols" para que el semanal en traspuesta sea promedio de semana_df,
+    # pero nosotros ya recalculamos semanal/periodo; en traspuesta semanal usamos semana_df[k].mean()
+    # Para evitar inconsistencias, tratamos los % como KPIs de promedio en la vista traspuesta.
+    mean_cols_for_transposed = mean_cols + pct_cols
+    df_transp = build_transposed_view(df, sum_cols + operativos + ["Q_pasajeros"], mean_cols_for_transposed)
 
     return df, df_sem, df_per, df_transp
 
@@ -377,8 +498,8 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
     result = pd.DataFrame(index=kpis)
 
     meses = {
-        1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
-        7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
     }
 
     for ws in weeks:
@@ -391,7 +512,7 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
             row = week_df[week_df["fecha"] == f][kpis]
             result[col] = row.iloc[0] if len(row) > 0 else np.nan
 
-        # Semana
+        # Semana (resumen)
         start = pd.to_datetime(ws)
         end = max(fechas)
         label = f"Semana {start.day:02d} al {end.day:02d} {meses[end.month]} {end.year}"
@@ -407,9 +528,10 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
 
         result[label] = vals
 
-    # Grupos de KPI
+    # Grupos de KPI (actualizados con nuevos KPIs de ventas y % operativos)
     grupos = {
-        "VENTAS": ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"],
+        "VENTAS (MONTO)": ["Ventas_Totales", "Ventas_Compartidas", "Ventas_Exclusivas"],
+        "VENTAS (VOLUMEN)": ["Q_journeys", "Q_pasajeros", "Q_pasajeros_exclusives", "Q_pasajeros_compartidas"],
         "PERFORMANCE": ["Q_Ticket", "Q_Tickets_WA", "Q_Tickets_Resueltos", "Reopen"],
         "CALIDAD (ENCUESTAS & SLA)": [
             "Q_Encuestas", "CSAT", "NPS Score",
@@ -423,7 +545,13 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
             "Cump_Interior", "Incump_Interior",
             "Cump_Conductor", "Incump_Conductor"
         ],
-        "OTROS": ["OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates"]
+        "OTROS (OPERATIVOS)": [
+            "OFF_TIME", "OFF_TIME_pct_pasajeros",
+            "Duracion_90", "Duracion_90_pct_pasajeros",
+            "Duracion_30", "Duracion_30_pct_pasajeros",
+            "Abandonados", "Abandonados_pct_pasajeros",
+            "Rescates", "Rescates_pct_pasajeros",
+        ],
     }
 
     k_present = list(result.index)
