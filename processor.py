@@ -464,7 +464,7 @@ def procesar_global(
 # 📐 VISTA TRASPUESTA
 # ============================================================
 
-def build_transposed_view(df_diario, sum_cols, mean_cols):
+def build_transposed_view(df_diario, sum_cols, mean_cols, pct_cols=None):
     """
     Crea vista traspuesta con:
     - columnas por día (DD/MM/YYYY)
@@ -490,6 +490,7 @@ def build_transposed_view(df_diario, sum_cols, mean_cols):
 
     # Detectar ratios operativos por pasajeros
     operativos = ["OFF_TIME", "Duracion_90", "Duracion_30", "Abandonados", "Rescates"]
+    if pct_cols is None:
     pct_cols = [f"{op}_pct_pasajeros" for op in operativos if f"{op}_pct_pasajeros" in df.columns]
 
     meses = {
